@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     max_file_size: int = 5242880  # 5MB
     allowed_extensions: str = "jpg,jpeg,png,gif,webp"
     
+    # AWS S3 Configuration
+    use_s3: bool = False  # Set to True in production
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "us-east-1"
+    s3_bucket_name: str = ""
+    
     class Config:
         env_file = ".env"
         case_sensitive = False

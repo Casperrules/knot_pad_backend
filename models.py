@@ -16,10 +16,17 @@ class StoryStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class GenderCategory(str, Enum):
+    BIOLOGICAL_MALE = "biological_male"
+    BIOLOGICAL_FEMALE = "biological_female"
+    ALL = "all"
+
+
 # User Models
 class UserBase(BaseModel):
     username: str
     anonymous_name: str
+    gender_preference: Optional[GenderCategory] = GenderCategory.BIOLOGICAL_FEMALE
 
 
 class UserCreate(BaseModel):
@@ -78,6 +85,7 @@ class StoryBase(BaseModel):
     content: str
     images: List[StoryImage] = []
     tags: List[str] = []
+    gender_category: GenderCategory = GenderCategory.BIOLOGICAL_FEMALE
 
 
 class StoryCreate(StoryBase):
@@ -89,6 +97,7 @@ class StoryUpdate(BaseModel):
     content: Optional[str] = None
     images: Optional[List[StoryImage]] = None
     tags: Optional[List[str]] = None
+    gender_category: Optional[GenderCategory] = None
 
 
 class StoryInDB(StoryBase):
@@ -117,6 +126,7 @@ class Story(StoryBase):
 class StoryApproval(BaseModel):
     approved: bool
     rejection_reason: Optional[str] = None
+    gender_category: Optional[GenderCategory] = None
 
 
 # Response Models
@@ -125,6 +135,7 @@ class UserResponse(BaseModel):
     username: str
     anonymous_name: str
     role: UserRole
+    gender_preference: GenderCategory
     created_at: datetime
 
 
@@ -133,9 +144,11 @@ class StoryResponse(BaseModel):
     title: str
     content: str
     author_anonymous_name: str
+    author_id: Optional[str] = None
     images: List[StoryImage]
     tags: List[str]
     status: StoryStatus
+    gender_category: GenderCategory
     created_at: datetime
     updated_at: datetime
     published_at: Optional[datetime] = None

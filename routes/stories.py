@@ -4,27 +4,58 @@ from datetime import datetime
 from bson import ObjectId
 from models import (
     StoryCreate, StoryUpdate, StoryResponse, StoryListResponse, 
-    StoryStatus, StoryApproval, StoryImage, UserRole
+    StoryStatus, StoryApproval, StoryImage, UserRole, GenderCategory
 )
 from auth import get_current_user, get_current_admin_user, update_refresh_token_activity
 from database import get_database
 from config import get_settings
+from s3_storage import s3_storage
 import os
 import uuid
+import logging
 from pathlib import Path
 import shutil
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stories", tags=["stories"])
 settings = get_settings()
 
-# Ensure upload directory exists
-Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+# Ensure upload directory exists (only for local storage)
+if not settings.use_s3:
+    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
 
 
 def allowed_file(filename: str) -> bool:
     """Check if file extension is allowed"""
     allowed = settings.allowed_extensions.split(',')
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed
+
+
+def convert_image_urls(images: List[dict]) -> List[dict]:
+    """
+    Convert S3 keys to pre-signed URLs for secure access
+    Local URLs remain unchanged
+    """
+    if not settings.use_s3:
+        return images
+    
+    converted_images = []
+    for img in images:
+        img_copy = img.copy()
+        url = img_copy.get('url', '')
+        
+        # If URL starts with s3://, generate pre-signed URL
+        if url.startswith('s3://'):
+            s3_key = url.replace('s3://', '')
+            try:
+                img_copy['url'] = s3_storage.get_presigned_url(s3_key, expiration=86400)  # 24 hours
+            except Exception as e:
+                logger.error(f"Failed to generate pre-signed URL: {e}")
+                img_copy['url'] = ''  # Fallback to empty string
+        
+        converted_images.append(img_copy)
+    
+    return converted_images
 
 
 @router.post("/upload-image", response_model=dict)
@@ -53,16 +84,36 @@ async def upload_image(
             detail=f"File too large. Maximum size: {settings.max_file_size / 1024 / 1024}MB"
         )
     
-    # Generate unique filename
-    file_extension = file.filename.rsplit('.', 1)[1].lower()
-    unique_filename = f"{uuid.uuid4()}.{file_extension}"
-    file_path = os.path.join(settings.upload_dir, unique_filename)
+    # Read file content
+    file_content = await file.read()
     
-    # Save file
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    return {"url": f"/uploads/{unique_filename}"}
+    # Upload based on configuration
+    if settings.use_s3:
+        try:
+            # Upload to S3 (returns S3 key, not URL)
+            s3_key = s3_storage.upload_file(
+                file_content=file_content,
+                filename=file.filename,
+                content_type=file.content_type or "image/jpeg"
+            )
+            # Store S3 key, not URL (for security)
+            return {"url": f"s3://{s3_key}"}
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to upload to S3: {str(e)}"
+            )
+    else:
+        # Local storage (development)
+        file_extension = file.filename.rsplit('.', 1)[1].lower()
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        file_path = os.path.join(settings.upload_dir, unique_filename)
+        
+        # Save file locally
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+        
+        return {"url": f"/uploads/{unique_filename}"}
 
 
 @router.post("/", response_model=StoryResponse, status_code=status.HTTP_201_CREATED)
@@ -79,6 +130,7 @@ async def create_story(
         "content": story.content,
         "images": [img.dict() for img in story.images],
         "tags": story.tags,
+        "gender_category": story.gender_category,
         "author_id": str(current_user["_id"]),
         "author_anonymous_name": current_user["anonymous_name"],
         "status": StoryStatus.DRAFT,
@@ -91,13 +143,17 @@ async def create_story(
     result = await db.stories.insert_one(story_doc)
     story_doc["_id"] = str(result.inserted_id)
     
+    # Convert S3 keys to pre-signed URLs
+    converted_images = convert_image_urls(story_doc["images"])
+    
     return StoryResponse(
         id=str(result.inserted_id),
         title=story_doc["title"],
         content=story_doc["content"],
         author_anonymous_name=story_doc["author_anonymous_name"],
-        images=[StoryImage(**img) for img in story_doc["images"]],
+        images=[StoryImage(**img) for img in converted_images],
         tags=story_doc["tags"],
+        gender_category=story_doc["gender_category"],
         status=story_doc["status"],
         created_at=story_doc["created_at"],
         updated_at=story_doc["updated_at"],
@@ -156,6 +212,8 @@ async def update_story(
         update_data["images"] = [img.dict() for img in story.images]
     if story.tags is not None:
         update_data["tags"] = story.tags
+    if story.gender_category is not None:
+        update_data["gender_category"] = story.gender_category
     
     await db.stories.update_one(
         {"_id": story_object_id},
@@ -164,13 +222,17 @@ async def update_story(
     
     updated_story = await db.stories.find_one({"_id": story_object_id})
     
+    # Convert S3 keys to pre-signed URLs
+    converted_images = convert_image_urls(updated_story["images"])
+    
     return StoryResponse(
         id=str(updated_story["_id"]),
         title=updated_story["title"],
         content=updated_story["content"],
         author_anonymous_name=updated_story["author_anonymous_name"],
-        images=[StoryImage(**img) for img in updated_story["images"]],
+        images=[StoryImage(**img) for img in converted_images],
         tags=updated_story["tags"],
+        gender_category=updated_story.get("gender_category", GenderCategory.BIOLOGICAL_FEMALE),
         status=updated_story["status"],
         created_at=updated_story["created_at"],
         updated_at=updated_story["updated_at"],
@@ -277,19 +339,33 @@ async def delete_story(
 async def get_feed(
     page: int = 1,
     page_size: int = 10,
-    current_user: dict = Depends(get_current_user),
+    search: Optional[str] = None,
+    gender_category: Optional[GenderCategory] = GenderCategory.BIOLOGICAL_FEMALE,
     db=Depends(get_database)
 ):
-    """Get approved stories feed"""
-    await update_refresh_token_activity(current_user["username"], db)
-    
+    """Get approved stories feed (public endpoint)"""
     skip = (page - 1) * page_size
     
+    # Build query with search and gender filter
+    query = {"status": StoryStatus.APPROVED}
+    
+    # Add gender filter
+    if gender_category and gender_category != GenderCategory.ALL:
+        query["gender_category"] = gender_category
+    
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"content": {"$regex": search, "$options": "i"}},
+            {"tags": {"$regex": search, "$options": "i"}},
+            {"author_anonymous_name": {"$regex": search, "$options": "i"}}
+        ]
+    
     # Get approved stories
-    cursor = db.stories.find({"status": StoryStatus.APPROVED}).sort("published_at", -1).skip(skip).limit(page_size)
+    cursor = db.stories.find(query).sort("published_at", -1).skip(skip).limit(page_size)
     stories = await cursor.to_list(length=page_size)
     
-    total = await db.stories.count_documents({"status": StoryStatus.APPROVED})
+    total = await db.stories.count_documents(query)
     
     story_responses = [
         StoryResponse(
@@ -297,8 +373,53 @@ async def get_feed(
             title=story["title"],
             content=story["content"],
             author_anonymous_name=story["author_anonymous_name"],
-            images=[StoryImage(**img) for img in story["images"]],
+            author_id=story["author_id"],
+            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
             tags=story["tags"],
+            gender_category=story.get("gender_category", GenderCategory.BIOLOGICAL_FEMALE),
+            status=story["status"],
+            created_at=story["created_at"],
+            updated_at=story["updated_at"],
+            published_at=story.get("published_at")
+        )
+        for story in stories
+    ]
+    
+    return StoryListResponse(
+        stories=story_responses,
+        total=total,
+        page=page,
+        page_size=page_size
+    )
+
+
+@router.get("/author/{author_id}", response_model=StoryListResponse)
+async def get_author_stories(
+    author_id: str,
+    page: int = 1,
+    page_size: int = 10,
+    db=Depends(get_database)
+):
+    """Get all approved stories by a specific author (public endpoint)"""
+    skip = (page - 1) * page_size
+    
+    # Get approved stories by author
+    query = {"author_id": author_id, "status": StoryStatus.APPROVED}
+    cursor = db.stories.find(query).sort("published_at", -1).skip(skip).limit(page_size)
+    stories = await cursor.to_list(length=page_size)
+    
+    total = await db.stories.count_documents(query)
+    
+    story_responses = [
+        StoryResponse(
+            id=str(story["_id"]),
+            title=story["title"],
+            content=story["content"],
+            author_anonymous_name=story["author_anonymous_name"],
+            author_id=story["author_id"],
+            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
+            tags=story["tags"],
+            gender_category=story.get("gender_category", GenderCategory.BIOLOGICAL_FEMALE),
             status=story["status"],
             created_at=story["created_at"],
             updated_at=story["updated_at"],
@@ -338,8 +459,9 @@ async def get_my_stories(
             title=story["title"],
             content=story["content"],
             author_anonymous_name=story["author_anonymous_name"],
-            images=[StoryImage(**img) for img in story["images"]],
+            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
             tags=story["tags"],
+            gender_category=story.get("gender_category", GenderCategory.BIOLOGICAL_FEMALE),
             status=story["status"],
             created_at=story["created_at"],
             updated_at=story["updated_at"],
@@ -380,7 +502,7 @@ async def get_pending_stories(
             title=story["title"],
             content=story["content"],
             author_anonymous_name=story["author_anonymous_name"],
-            images=[StoryImage(**img) for img in story["images"]],
+            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
             tags=story["tags"],
             status=story["status"],
             created_at=story["created_at"],
@@ -437,6 +559,12 @@ async def approve_story(
             "updated_at": datetime.utcnow(),
             "rejection_reason": None
         }
+        # Admin can set gender category during approval
+        if approval.gender_category:
+            update_data["gender_category"] = approval.gender_category
+        # Set default if not specified
+        elif "gender_category" not in story:
+            update_data["gender_category"] = GenderCategory.BIOLOGICAL_FEMALE
     else:
         update_data = {
             "status": StoryStatus.REJECTED,
@@ -485,12 +613,16 @@ async def get_story(
                 detail="Not authorized to view this story"
             )
     
+    # Convert S3 keys to pre-signed URLs
+    converted_images = convert_image_urls(story["images"])
+    
     return StoryResponse(
         id=str(story["_id"]),
         title=story["title"],
         content=story["content"],
         author_anonymous_name=story["author_anonymous_name"],
-        images=[StoryImage(**img) for img in story["images"]],
+        author_id=story["author_id"],
+        images=[StoryImage(**img) for img in converted_images],
         tags=story["tags"],
         status=story["status"],
         created_at=story["created_at"],
@@ -498,3 +630,46 @@ async def get_story(
         published_at=story.get("published_at"),
         rejection_reason=story.get("rejection_reason")
     )
+
+
+@router.get("/author/{author_id}", response_model=StoryListResponse)
+async def get_author_stories(
+    author_id: str,
+    page: int = 1,
+    page_size: int = 10,
+    db=Depends(get_database)
+):
+    """Get all approved stories by a specific author (public endpoint)"""
+    skip = (page - 1) * page_size
+    
+    # Get approved stories by author
+    query = {"author_id": author_id, "status": StoryStatus.APPROVED}
+    cursor = db.stories.find(query).sort("published_at", -1).skip(skip).limit(page_size)
+    stories = await cursor.to_list(length=page_size)
+    
+    total = await db.stories.count_documents(query)
+    
+    story_responses = [
+        StoryResponse(
+            id=str(story["_id"]),
+            title=story["title"],
+            content=story["content"],
+            author_anonymous_name=story["author_anonymous_name"],
+            author_id=story["author_id"],
+            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
+            tags=story["tags"],
+            status=story["status"],
+            created_at=story["created_at"],
+            updated_at=story["updated_at"],
+            published_at=story.get("published_at")
+        )
+        for story in stories
+    ]
+    
+    return StoryListResponse(
+        stories=story_responses,
+        total=total,
+        page=page,
+        page_size=page_size
+    )
+

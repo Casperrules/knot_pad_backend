@@ -47,6 +47,7 @@ async def register(user: UserCreate, db=Depends(get_database)):
         "hashed_password": get_password_hash(user.password),
         "anonymous_name": anonymous_name,
         "role": UserRole.USER,
+        "gender_preference": "biological_female",  # Default preference
         "created_at": datetime.utcnow(),
         "is_active": True
     }
@@ -59,6 +60,7 @@ async def register(user: UserCreate, db=Depends(get_database)):
         username=user_doc["username"],
         anonymous_name=user_doc["anonymous_name"],
         role=user_doc["role"],
+        gender_preference=user_doc["gender_preference"],
         created_at=user_doc["created_at"]
     )
 
@@ -187,6 +189,20 @@ async def logout(current_user: dict = Depends(get_current_user), db=Depends(get_
     return {"message": "Successfully logged out"}
 
 
+@router.put("/preferences")
+async def update_preferences(
+    gender_preference: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Update user's gender preference"""
+    await db.users.update_one(
+        {"_id": current_user["_id"]},
+        {"$set": {"gender_preference": gender_preference}}
+    )
+    return {"message": "Preferences updated successfully"}
+
+
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     return UserResponse(
@@ -194,5 +210,6 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
         username=current_user["username"],
         anonymous_name=current_user["anonymous_name"],
         role=current_user["role"],
+        gender_preference=current_user.get("gender_preference", "biological_female"),
         created_at=current_user["created_at"]
     )
