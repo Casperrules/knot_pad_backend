@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     max_file_size: int = 5242880  # 5MB
     allowed_extensions: str = "jpg,jpeg,png,gif,webp"
     
+    # Video Upload
+    video_upload_dir: str = "uploads/videos"
+    max_video_size: int = 104857600  # 100MB
+    allowed_video_extensions: str = "mp4,webm,mov,avi"
+    
     # AWS S3 Configuration
     use_s3: bool = False  # Set to True in production
     aws_access_key_id: str = ""

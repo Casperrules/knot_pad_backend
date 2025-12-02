@@ -112,6 +112,43 @@ async def get_current_admin_user(current_user: dict = Depends(get_current_user))
     return current_user
 
 
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db=Depends(get_database)
+) -> Optional[dict]:
+    """Get current user if token provided, otherwise return None (for public endpoints)"""
+    if not credentials:
+        return None
+    
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        username: str = payload.get("sub")
+        if username is None:
+            return None
+    except JWTError:
+        return None
+    
+    user = await db.users.find_one({"username": username})
+    if user is None:
+        return None
+    
+    if not user.get("is_active", True):
+        return None
+    
+    return user
+
+
+def get_current_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Get current admin user (synchronous helper for videos route)"""
+    if current_user.get("role") != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+    return current_user
+
+
 async def update_refresh_token_activity(username: str, db):
     """Update last activity time for refresh token"""
     await db.refresh_tokens.update_one(

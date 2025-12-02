@@ -1,8 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
 from auth import get_current_user, get_optional_user, get_current_admin
+from config import get_settings
+from s3_storage import s3_storage
+import uuid
+import os
+import logging
+from pathlib import Path
 from models import (
     User,
     VideoCreate,
@@ -14,14 +20,93 @@ from models import (
 )
 from database import db
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/videos", tags=["videos"])
+settings = get_settings()
+
+# Ensure upload directory exists (only for local storage)
+if not settings.use_s3:
+    Path(settings.video_upload_dir).mkdir(parents=True, exist_ok=True)
+
+
+def allowed_video_file(filename: str) -> bool:
+    """Check if video file extension is allowed"""
+    allowed = settings.allowed_video_extensions.split(',')
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed
+
+
+@router.post("/upload-video", response_model=dict)
+async def upload_video_file(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Upload a video file to S3 or local storage"""
+    if not allowed_video_file(file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type not allowed. Allowed types: {settings.allowed_video_extensions}"
+        )
+    
+    # Check file size
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    
+    if file_size > settings.max_video_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_video_size / 1024 / 1024}MB"
+        )
+    
+    # Read file content
+    file_content = await file.read()
+    
+    # Upload based on configuration
+    if settings.use_s3:
+        try:
+            # Upload to S3 (returns S3 key, not URL)
+            s3_key = s3_storage.upload_file(
+                file_content=file_content,
+                filename=file.filename,
+                content_type=file.content_type or "video/mp4",
+                folder="videos"
+            )
+            # Store S3 key, not URL (for security)
+            return {"url": f"s3://{s3_key}"}
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload to S3: {str(e)}"
+            )
+    else:
+        # Local storage (development)
+        file_extension = file.filename.rsplit('.', 1)[1].lower()
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        file_path = os.path.join(settings.video_upload_dir, unique_filename)
+        
+        # Save file locally
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+        
+        return {"url": f"/uploads/videos/{unique_filename}"}
 
 
 def video_helper(video: dict) -> dict:
     """Convert MongoDB video document to response format"""
+    video_url = video["video_url"]
+    
+    # Convert S3 key to pre-signed URL if needed
+    if settings.use_s3 and video_url.startswith("s3://"):
+        s3_key = video_url.replace("s3://", "")
+        try:
+            video_url = s3_storage.get_presigned_url(s3_key, expiration=86400)  # 24 hours
+        except Exception as e:
+            logger.error(f"Failed to generate pre-signed URL for video: {e}")
+            video_url = ""  # Fallback to empty string
+    
     return {
         "id": str(video["_id"]),
-        "video_url": video["video_url"],
+        "video_url": video_url,
         "caption": video["caption"],
         "tags": video.get("tags", []),
         "mature_content": video.get("mature_content", False),
