@@ -3,18 +3,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from database import connect_to_mongo, close_mongo_connection
-from routes import auth, stories, comments, chapters, videos
+from routes import auth, stories, comments, chapters, videos, monitoring
 from config import get_settings
 import os
+import logging
+import time
 from pathlib import Path
+from logger_config import setup_logging
+from middleware import RequestLoggingMiddleware, PerformanceMonitoringMiddleware, ErrorTrackingMiddleware
+from metrics import metrics_collector
 
 settings = get_settings()
+
+# Setup logging
+logger = setup_logging(log_level="INFO", log_dir="logs")
+logger.info("Application starting...")
 
 app = FastAPI(
     title="Wattpad Clone API",
     description="A full-stack blogging application with JWT authentication",
     version="1.0.0"
 )
+
+# Add custom middleware (order matters - first added is outermost)
+app.add_middleware(ErrorTrackingMiddleware)
+app.add_middleware(PerformanceMonitoringMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 
 # CORS Middleware
 app.add_middleware(
@@ -37,15 +51,56 @@ app.include_router(stories.router)
 app.include_router(comments.router)
 app.include_router(chapters.router)
 app.include_router(videos.router)
+app.include_router(monitoring.router)
 
 # Startup and shutdown events
 @app.on_event("startup")
 async def startup_event():
+    logger.info("Connecting to MongoDB...")
     await connect_to_mongo()
+    logger.info("Application started successfully")
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    logger.info("Shutting down application...")
     await close_mongo_connection()
+    logger.info("Application shutdown complete")
+
+# Middleware to collect metrics
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    start_time = time.time()
+    
+    # Try to extract user ID from JWT token
+    user_id = None
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        try:
+            from jose import jwt
+            from config import get_settings
+            settings = get_settings()
+            token = auth_header.split(" ")[1]
+            payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+            username = payload.get("sub")
+            if username:
+                # Use username as user_id for tracking
+                user_id = username
+        except Exception:
+            pass  # Ignore token parsing errors for metrics
+    
+    response = await call_next(request)
+    duration = time.time() - start_time
+    
+    # Record metrics with user_id
+    metrics_collector.record_request(
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration=duration,
+        user_id=user_id
+    )
+    
+    return response
 
 # Root endpoint
 @app.get("/")
@@ -64,6 +119,10 @@ async def health_check():
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(
+        f"Unhandled exception in {request.method} {request.url.path}: {str(exc)}",
+        exc_info=True
+    )
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error occurred"}
