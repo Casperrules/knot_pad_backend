@@ -60,12 +60,29 @@ class S3Storage:
             raise ValueError("S3 storage is not enabled")
         
         try:
+            # Add ResponseContentType for proper video streaming
+            params = {
+                'Bucket': self.bucket_name,
+                'Key': s3_key
+            }
+            
+            # Set proper content type for videos
+            if s3_key.startswith('videos/'):
+                # Get file extension
+                ext = s3_key.split('.')[-1].lower()
+                content_types = {
+                    'mp4': 'video/mp4',
+                    'webm': 'video/webm',
+                    'ogg': 'video/ogg',
+                    'mov': 'video/quicktime',
+                    'avi': 'video/x-msvideo'
+                }
+                if ext in content_types:
+                    params['ResponseContentType'] = content_types[ext]
+            
             url = self.s3_client.generate_presigned_url(
                 'get_object',
-                Params={
-                    'Bucket': self.bucket_name,
-                    'Key': s3_key
-                },
+                Params=params,
                 ExpiresIn=expiration
             )
             return url
