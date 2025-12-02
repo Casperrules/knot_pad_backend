@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Video Upload
     video_upload_dir: str = "uploads/videos"
     max_video_size: int = 104857600  # 100MB
-    allowed_video_extensions: str = "mp4"  # Only MP4 for mobile compatibility
+    allowed_video_extensions: str = "mp4,webm,ogg,mov,avi"
     
     # AWS S3 Configuration
     use_s3: bool = False  # Set to True in production
