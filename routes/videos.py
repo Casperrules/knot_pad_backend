@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
@@ -23,6 +25,7 @@ from database import get_database
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 settings = get_settings()
+limiter = Limiter(key_func=get_remote_address)
 
 # Ensure upload directory exists (only for local storage)
 if not settings.use_s3:
@@ -36,7 +39,9 @@ def allowed_video_file(filename: str) -> bool:
 
 
 @router.post("/upload-video", response_model=dict)
+@limiter.limit("10/hour")
 async def upload_video_file(
+    request: Request,
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):

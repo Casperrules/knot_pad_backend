@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from datetime import datetime, timedelta
 from models import UserCreate, UserLogin, Token, RefreshTokenRequest, UserRole, UserResponse, OTPCreate, OTPVerify
 from auth import (
@@ -16,6 +18,7 @@ import random
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 settings = get_settings()
+limiter = Limiter(key_func=get_remote_address)
 
 
 def generate_anonymous_name() -> str:
@@ -26,7 +29,8 @@ def generate_anonymous_name() -> str:
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(user: UserCreate, db=Depends(get_database)):
+@limiter.limit("5/minute")
+async def register(request: Request, user: UserCreate, db=Depends(get_database)):
     # Check if username already exists (if provided)
     if user.username:
         existing_user = await db.users.find_one({"username": user.username})
@@ -76,7 +80,8 @@ async def register(user: UserCreate, db=Depends(get_database)):
 
 
 @router.post("/login", response_model=Token)
-async def login(user: UserLogin, db=Depends(get_database)):
+@limiter.limit("10/minute")
+async def login(request: Request, user: UserLogin, db=Depends(get_database)):
     # Check for admin credentials
     if user.username == settings.admin_username and user.password == settings.admin_password:
         # Check if admin user exists, if not create it
@@ -145,7 +150,8 @@ async def login(user: UserLogin, db=Depends(get_database)):
 
 
 @router.post("/refresh", response_model=Token)
-async def refresh_token(request: RefreshTokenRequest, db=Depends(get_database)):
+@limiter.limit("20/minute")
+async def refresh_token(req: Request, request: RefreshTokenRequest, db=Depends(get_database)):
     # Verify refresh token
     token_data = await verify_token(request.refresh_token, "refresh")
     

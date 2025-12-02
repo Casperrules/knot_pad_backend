@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from typing import List, Optional
 from datetime import datetime
 from bson import ObjectId
@@ -19,6 +21,7 @@ import shutil
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stories", tags=["stories"])
 settings = get_settings()
+limiter = Limiter(key_func=get_remote_address)
 
 # Ensure upload directory exists (only for local storage)
 if not settings.use_s3:
@@ -117,7 +120,9 @@ async def upload_image(
 
 
 @router.post("/", response_model=StoryResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/hour")
 async def create_story(
+    request: Request,
     story: StoryCreate,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_database)
