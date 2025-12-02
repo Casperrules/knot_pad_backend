@@ -125,7 +125,7 @@ def video_helper(video: dict) -> dict:
 @router.post("/", response_model=VideoResponse)
 async def create_video(
     video_data: VideoCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     db = Depends(get_database),
 ):
     """Create a new video"""
@@ -136,8 +136,8 @@ async def create_video(
         "caption": video_data.caption,
         "tags": video_data.tags,
         "mature_content": video_data.mature_content,
-        "author_id": current_user.id,
-        "author_anonymous_name": current_user.anonymous_name,
+        "author_id": str(current_user["_id"]),
+        "author_anonymous_name": current_user["anonymous_name"],
         "likes": 0,
         "views": 0,
         "status": StoryStatus.APPROVED,
@@ -182,11 +182,11 @@ async def get_videos(
 
 @router.get("/my-videos", response_model=VideoListResponse)
 async def get_my_videos(
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     db = Depends(get_database),
 ):
     """Get current user's videos"""
-    videos = await db.videos.find({"author_id": current_user.id}).sort("created_at", -1).to_list(length=None)
+    videos = await db.videos.find({"author_id": str(current_user["_id"])}).sort("created_at", -1).to_list(length=None)
     
     total = len(videos)
     video_responses = [VideoResponse(**video_helper(video)) for video in videos]
@@ -223,7 +223,7 @@ async def get_video(
 async def update_video(
     video_id: str,
     video_data: VideoUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     db = Depends(get_database),
 ):
     """Update a video"""
@@ -236,7 +236,7 @@ async def update_video(
         raise HTTPException(status_code=404, detail="Video not found")
     
     # Check if user is the author
-    if video["author_id"] != current_user.id:
+    if video["author_id"] != str(current_user["_id"]):
         raise HTTPException(
             status_code=403, detail="You can only edit your own videos"
         )
@@ -260,7 +260,7 @@ async def update_video(
 @router.delete("/{video_id}")
 async def delete_video(
     video_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     db = Depends(get_database),
 ):
     """Delete a video"""
@@ -273,7 +273,7 @@ async def delete_video(
         raise HTTPException(status_code=404, detail="Video not found")
     
     # Check if user is the author or admin
-    if video["author_id"] != current_user.id and current_user.role != "admin":
+    if video["author_id"] != str(current_user["_id"]) and current_user["role"] != "admin":
         raise HTTPException(
             status_code=403, detail="You can only delete your own videos"
         )
@@ -290,7 +290,7 @@ async def delete_video(
 @router.post("/{video_id}/like")
 async def toggle_like_video(
     video_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     db = Depends(get_database),
 ):
     """Toggle like on a video"""
@@ -305,7 +305,7 @@ async def toggle_like_video(
     # Check if user already liked
     existing_like = await db.video_likes.find_one({
         "video_id": video_id,
-        "user_id": current_user.id
+        "user_id": str(current_user["_id"])
     })
     
     if existing_like:
@@ -320,7 +320,7 @@ async def toggle_like_video(
         # Like
         await db.video_likes.insert_one({
             "video_id": video_id,
-            "user_id": current_user.id,
+            "user_id": str(current_user["_id"]),
             "created_at": datetime.utcnow()
         })
         await db.videos.update_one(
@@ -333,13 +333,13 @@ async def toggle_like_video(
 @router.get("/{video_id}/liked")
 async def check_if_liked(
     video_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     db = Depends(get_database),
 ):
     """Check if current user has liked a video"""
     like = await db.video_likes.find_one({
         "video_id": video_id,
-        "user_id": current_user.id
+        "user_id": str(current_user["_id"])
     })
     
     return {"liked": like is not None}
