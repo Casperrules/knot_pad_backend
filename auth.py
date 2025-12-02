@@ -11,6 +11,7 @@ from database import get_database
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
+optional_security = HTTPBearer(auto_error=False)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -113,7 +114,7 @@ async def get_current_admin_user(current_user: dict = Depends(get_current_user))
 
 
 async def get_optional_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security),
     db=Depends(get_database)
 ) -> Optional[dict]:
     """Get current user if token provided, otherwise return None (for public endpoints)"""
