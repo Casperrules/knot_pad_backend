@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import datetime, timedelta
-from models import UserCreate, UserLogin, Token, RefreshTokenRequest, UserRole, UserResponse
+from models import UserCreate, UserLogin, Token, RefreshTokenRequest, UserRole, UserResponse, OTPCreate, OTPVerify
 from auth import (
     get_password_hash, 
     verify_password, 
@@ -12,6 +12,7 @@ from auth import (
 from database import get_database
 from config import get_settings
 import secrets
+import random
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 settings = get_settings()
@@ -26,13 +27,23 @@ def generate_anonymous_name() -> str:
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user: UserCreate, db=Depends(get_database)):
-    # Check if username already exists
-    existing_user = await db.users.find_one({"username": user.username})
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
-        )
+    # Check if username already exists (if provided)
+    if user.username:
+        existing_user = await db.users.find_one({"username": user.username})
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already registered"
+            )
+    
+    # Check if email already exists (if provided)
+    if user.email:
+        existing_email = await db.users.find_one({"email": user.email})
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
     
     # Generate anonymous name if not provided
     anonymous_name = user.anonymous_name or generate_anonymous_name()
@@ -44,10 +55,10 @@ async def register(user: UserCreate, db=Depends(get_database)):
     # Create user document
     user_doc = {
         "username": user.username,
+        "email": user.email,
         "hashed_password": get_password_hash(user.password),
         "anonymous_name": anonymous_name,
         "role": UserRole.USER,
-        "gender_preference": "biological_female",  # Default preference
         "created_at": datetime.utcnow(),
         "is_active": True
     }
@@ -57,10 +68,9 @@ async def register(user: UserCreate, db=Depends(get_database)):
     
     return UserResponse(
         id=str(result.inserted_id),
-        username=user_doc["username"],
+        username=user_doc.get("username"),
         anonymous_name=user_doc["anonymous_name"],
         role=user_doc["role"],
-        gender_preference=user_doc["gender_preference"],
         created_at=user_doc["created_at"]
     )
 
@@ -86,12 +96,22 @@ async def login(user: UserLogin, db=Depends(get_database)):
         user_role = UserRole.ADMIN
         username = settings.admin_username
     else:
-        # Regular user authentication
-        db_user = await db.users.find_one({"username": user.username})
+        # Regular user authentication - find by username OR email
+        db_user = None
+        if user.username:
+            db_user = await db.users.find_one({"username": user.username})
+        elif user.email:
+            db_user = await db.users.find_one({"email": user.email})
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username or email required"
+            )
+        
         if not db_user or not verify_password(user.password, db_user["hashed_password"]):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect username or password",
+                detail="Incorrect credentials",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
@@ -102,7 +122,7 @@ async def login(user: UserLogin, db=Depends(get_database)):
             )
         
         user_role = db_user["role"]
-        username = db_user["username"]
+        username = db_user.get("username") or db_user.get("email")
     
     # Create tokens
     access_token = create_access_token(data={"sub": username, "role": user_role})
@@ -189,27 +209,152 @@ async def logout(current_user: dict = Depends(get_current_user), db=Depends(get_
     return {"message": "Successfully logged out"}
 
 
-@router.put("/preferences")
-async def update_preferences(
-    gender_preference: str,
-    current_user: dict = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    """Update user's gender preference"""
-    await db.users.update_one(
-        {"_id": current_user["_id"]},
-        {"$set": {"gender_preference": gender_preference}}
-    )
-    return {"message": "Preferences updated successfully"}
-
-
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     return UserResponse(
         id=str(current_user["_id"]),
-        username=current_user["username"],
+        username=current_user.get("username"),
         anonymous_name=current_user["anonymous_name"],
         role=current_user["role"],
-        gender_preference=current_user.get("gender_preference", "biological_female"),
         created_at=current_user["created_at"]
     )
+
+
+@router.put("/profile")
+async def update_profile(
+    anonymous_name: str = None,
+    email: str = None,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Update user profile - anonymous name and email"""
+    update_fields = {}
+    
+    if anonymous_name:
+        # Check if anonymous name is already taken
+        existing = await db.users.find_one({
+            "anonymous_name": anonymous_name,
+            "_id": {"$ne": current_user["_id"]}
+        })
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Anonymous name already taken"
+            )
+        update_fields["anonymous_name"] = anonymous_name
+    
+    if email:
+        # Check if email is already taken
+        existing = await db.users.find_one({
+            "email": email,
+            "_id": {"$ne": current_user["_id"]}
+        })
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already taken"
+            )
+        update_fields["email"] = email
+    
+    if update_fields:
+        await db.users.update_one(
+            {"_id": current_user["_id"]},
+            {"$set": update_fields}
+        )
+    
+    return {"message": "Profile updated successfully"}
+
+
+@router.post("/send-otp")
+async def send_otp(otp_request: OTPCreate, db=Depends(get_database)):
+    """Send OTP to email for login/registration"""
+    # Generate 4-digit OTP
+    code = str(random.randint(1000, 9999))
+    
+    # Delete any existing OTPs for this email
+    await db.otps.delete_many({"email": otp_request.email})
+    
+    # Create OTP document
+    otp_doc = {
+        "email": otp_request.email,
+        "code": code,
+        "created_at": datetime.utcnow(),
+        "expires_at": datetime.utcnow() + timedelta(minutes=10),
+        "used": False
+    }
+    
+    await db.otps.insert_one(otp_doc)
+    
+    # TODO: Send email with OTP code
+    # For now, return the code in response (REMOVE IN PRODUCTION)
+    return {"message": "OTP sent to email", "code": code}
+
+
+@router.post("/verify-otp", response_model=Token)
+async def verify_otp(otp_verify: OTPVerify, db=Depends(get_database)):
+    """Verify OTP and login/register user"""
+    # Find OTP
+    otp = await db.otps.find_one({
+        "email": otp_verify.email,
+        "code": otp_verify.code,
+        "used": False
+    })
+    
+    if not otp:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired OTP"
+        )
+    
+    # Check if OTP expired
+    if datetime.utcnow() > otp["expires_at"]:
+        await db.otps.delete_one({"_id": otp["_id"]})
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="OTP expired"
+        )
+    
+    # Mark OTP as used
+    await db.otps.update_one(
+        {"_id": otp["_id"]},
+        {"$set": {"used": True}}
+    )
+    
+    # Find or create user
+    user = await db.users.find_one({"email": otp_verify.email})
+    
+    if not user:
+        # Create new user with email only
+        anonymous_name = generate_anonymous_name()
+        while await db.users.find_one({"anonymous_name": anonymous_name}):
+            anonymous_name = generate_anonymous_name()
+        
+        user_doc = {
+            "email": otp_verify.email,
+            "anonymous_name": anonymous_name,
+            "role": UserRole.USER,
+            "created_at": datetime.utcnow(),
+            "is_active": True
+        }
+        
+        result = await db.users.insert_one(user_doc)
+        user = await db.users.find_one({"_id": result.inserted_id})
+    
+    # Create tokens
+    identifier = user.get("username") or user["email"]
+    access_token = create_access_token(data={"sub": identifier, "role": user["role"]})
+    refresh_token = create_refresh_token(data={"sub": identifier, "role": user["role"]})
+    
+    # Store refresh token
+    refresh_token_doc = {
+        "username": identifier,
+        "token": refresh_token,
+        "created_at": datetime.utcnow(),
+        "last_activity": datetime.utcnow(),
+        "expires_at": datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+    }
+    
+    await db.refresh_tokens.delete_many({"username": identifier})
+    await db.refresh_tokens.insert_one(refresh_token_doc)
+    
+    return Token(access_token=access_token, refresh_token=refresh_token)

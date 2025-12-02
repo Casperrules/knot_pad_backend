@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from database import connect_to_mongo, close_mongo_connection
-from routes import auth, stories
+from routes import auth, stories, comments, chapters, videos
 from config import get_settings
 import os
 from pathlib import Path
@@ -34,6 +34,9 @@ app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads"
 # Include routers
 app.include_router(auth.router)
 app.include_router(stories.router)
+app.include_router(comments.router)
+app.include_router(chapters.router)
+app.include_router(videos.router)
 
 # Startup and shutdown events
 @app.on_event("startup")

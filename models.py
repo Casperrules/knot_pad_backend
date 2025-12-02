@@ -16,28 +16,24 @@ class StoryStatus(str, Enum):
     REJECTED = "rejected"
 
 
-class GenderCategory(str, Enum):
-    BIOLOGICAL_MALE = "biological_male"
-    BIOLOGICAL_FEMALE = "biological_female"
-    ALL = "all"
-
-
 # User Models
 class UserBase(BaseModel):
-    username: str
+    username: Optional[str] = None
     anonymous_name: str
-    gender_preference: Optional[GenderCategory] = GenderCategory.BIOLOGICAL_FEMALE
+    email: Optional[str] = None
 
 
 class UserCreate(BaseModel):
-    username: str
+    username: Optional[str] = None
     password: str
+    email: Optional[str] = None
     anonymous_name: Optional[str] = None
 
 
 class UserLogin(BaseModel):
-    username: str
     password: str
+    username: Optional[str] = None
+    email: Optional[str] = None
 
 
 class UserInDB(UserBase):
@@ -82,10 +78,10 @@ class StoryImage(BaseModel):
 
 class StoryBase(BaseModel):
     title: str
-    content: str
-    images: List[StoryImage] = []
+    description: str  # Story description/summary
+    cover_image: Optional[str] = None  # Story cover image
     tags: List[str] = []
-    gender_category: GenderCategory = GenderCategory.BIOLOGICAL_FEMALE
+    mature_content: bool = False  # Replaces age restriction
 
 
 class StoryCreate(StoryBase):
@@ -94,10 +90,10 @@ class StoryCreate(StoryBase):
 
 class StoryUpdate(BaseModel):
     title: Optional[str] = None
-    content: Optional[str] = None
-    images: Optional[List[StoryImage]] = None
+    description: Optional[str] = None
+    cover_image: Optional[str] = None
     tags: Optional[List[str]] = None
-    gender_category: Optional[GenderCategory] = None
+    mature_content: Optional[bool] = None
 
 
 class StoryInDB(StoryBase):
@@ -126,29 +122,29 @@ class Story(StoryBase):
 class StoryApproval(BaseModel):
     approved: bool
     rejection_reason: Optional[str] = None
-    gender_category: Optional[GenderCategory] = None
 
 
 # Response Models
 class UserResponse(BaseModel):
     id: str
-    username: str
+    username: Optional[str] = None
     anonymous_name: str
     role: UserRole
-    gender_preference: GenderCategory
     created_at: datetime
 
 
 class StoryResponse(BaseModel):
     id: str
     title: str
-    content: str
+    description: str
+    cover_image: Optional[str] = None
     author_anonymous_name: str
     author_id: Optional[str] = None
-    images: List[StoryImage]
     tags: List[str]
     status: StoryStatus
-    gender_category: GenderCategory
+    mature_content: bool
+    chapter_count: int = 0
+    total_reads: int = 0
     created_at: datetime
     updated_at: datetime
     published_at: Optional[datetime] = None
@@ -158,5 +154,163 @@ class StoryResponse(BaseModel):
 class StoryListResponse(BaseModel):
     stories: List[StoryResponse]
     total: int
-    page: int
-    page_size: int
+
+
+# Chapter Models
+class ChapterBase(BaseModel):
+    title: str
+    content: str
+    chapter_number: int
+    story_id: str
+
+
+class ChapterCreate(ChapterBase):
+    pass
+
+
+class ChapterUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    chapter_number: Optional[int] = None
+
+
+class Chapter(ChapterBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    published: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class ChapterResponse(BaseModel):
+    id: str
+    title: str
+    content: str
+    chapter_number: int
+    story_id: str
+    created_at: datetime
+    updated_at: datetime
+    published: bool
+
+
+# Comment Models
+class CommentBase(BaseModel):
+    content: str
+    story_id: Optional[str] = None
+    video_id: Optional[str] = None  # Comment on video
+    chapter_id: Optional[str] = None  # Comment on specific chapter
+    selected_text: Optional[str] = None  # Text user highlighted
+    text_position: Optional[int] = None  # Character position in chapter
+    parent_comment_id: Optional[str] = None  # For nested replies
+
+
+class CommentCreate(CommentBase):
+    pass
+
+
+class Comment(CommentBase):
+    id: str
+    user_id: str
+    anonymous_name: str
+    upvotes: int = 0
+    downvotes: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CommentResponse(BaseModel):
+    id: str
+    content: str
+    story_id: Optional[str] = None
+    video_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    selected_text: Optional[str] = None
+    text_position: Optional[int] = None
+    parent_comment_id: Optional[str] = None
+    user_id: str
+    anonymous_name: str
+    upvotes: int
+    downvotes: int
+    created_at: datetime
+    updated_at: datetime
+    replies: List["CommentResponse"] = []  # Nested replies
+
+
+# OTP Models
+class OTPBase(BaseModel):
+    email: str
+
+
+class OTPCreate(OTPBase):
+    pass
+
+
+class OTP(OTPBase):
+    id: str
+    code: str
+    created_at: datetime
+    expires_at: datetime
+    used: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class OTPVerify(BaseModel):
+    email: str
+    code: str
+
+
+# Video Models
+class VideoBase(BaseModel):
+    video_url: str
+    caption: str
+    tags: List[str] = []
+    mature_content: bool = False
+
+
+class VideoCreate(VideoBase):
+    pass
+
+
+class VideoUpdate(BaseModel):
+    caption: Optional[str] = None
+    tags: Optional[List[str]] = None
+    mature_content: Optional[bool] = None
+
+
+class Video(VideoBase):
+    id: str
+    author_id: str
+    author_anonymous_name: str
+    likes: int = 0
+    views: int = 0
+    status: StoryStatus = StoryStatus.DRAFT
+    created_at: datetime
+    updated_at: datetime
+    published_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+
+
+class VideoResponse(Video):
+    pass
+
+
+class VideoListResponse(BaseModel):
+    videos: List[VideoResponse]
+    total: int
+
+
+class VideoLike(BaseModel):
+    video_id: str
+    user_id: str
+
+
+class VideoApproval(BaseModel):
+    approved: bool
+    rejection_reason: Optional[str] = None

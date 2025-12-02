@@ -4,7 +4,7 @@ from datetime import datetime
 from bson import ObjectId
 from models import (
     StoryCreate, StoryUpdate, StoryResponse, StoryListResponse, 
-    StoryStatus, StoryApproval, StoryImage, UserRole, GenderCategory
+    StoryStatus, StoryApproval, StoryImage, UserRole
 )
 from auth import get_current_user, get_current_admin_user, update_refresh_token_activity
 from database import get_database
@@ -127,10 +127,10 @@ async def create_story(
     
     story_doc = {
         "title": story.title,
-        "content": story.content,
-        "images": [img.dict() for img in story.images],
+        "description": story.description,
+        "cover_image": story.cover_image,
         "tags": story.tags,
-        "gender_category": story.gender_category,
+        "mature_content": story.mature_content,
         "author_id": str(current_user["_id"]),
         "author_anonymous_name": current_user["anonymous_name"],
         "status": StoryStatus.DRAFT,
@@ -143,18 +143,17 @@ async def create_story(
     result = await db.stories.insert_one(story_doc)
     story_doc["_id"] = str(result.inserted_id)
     
-    # Convert S3 keys to pre-signed URLs
-    converted_images = convert_image_urls(story_doc["images"])
-    
     return StoryResponse(
         id=str(result.inserted_id),
         title=story_doc["title"],
-        content=story_doc["content"],
+        description=story_doc["description"],
+        cover_image=story_doc.get("cover_image"),
         author_anonymous_name=story_doc["author_anonymous_name"],
-        images=[StoryImage(**img) for img in converted_images],
         tags=story_doc["tags"],
-        gender_category=story_doc["gender_category"],
+        mature_content=story_doc["mature_content"],
         status=story_doc["status"],
+        chapter_count=0,
+        total_reads=0,
         created_at=story_doc["created_at"],
         updated_at=story_doc["updated_at"],
         published_at=story_doc["published_at"]
@@ -195,25 +194,18 @@ async def update_story(
             detail="Not authorized to update this story"
         )
     
-    # Can't update approved or pending stories
-    if existing_story["status"] in [StoryStatus.APPROVED, StoryStatus.PENDING]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot update story with status: {existing_story['status']}"
-        )
-    
     # Update fields
     update_data = {"updated_at": datetime.utcnow()}
     if story.title is not None:
         update_data["title"] = story.title
-    if story.content is not None:
-        update_data["content"] = story.content
-    if story.images is not None:
-        update_data["images"] = [img.dict() for img in story.images]
+    if story.description is not None:
+        update_data["description"] = story.description
+    if story.cover_image is not None:
+        update_data["cover_image"] = story.cover_image
     if story.tags is not None:
         update_data["tags"] = story.tags
-    if story.gender_category is not None:
-        update_data["gender_category"] = story.gender_category
+    if story.mature_content is not None:
+        update_data["mature_content"] = story.mature_content
     
     await db.stories.update_one(
         {"_id": story_object_id},
@@ -222,74 +214,25 @@ async def update_story(
     
     updated_story = await db.stories.find_one({"_id": story_object_id})
     
-    # Convert S3 keys to pre-signed URLs
-    converted_images = convert_image_urls(updated_story["images"])
+    # Get chapter count
+    chapter_count = await db.chapters.count_documents({"story_id": story_id})
     
     return StoryResponse(
         id=str(updated_story["_id"]),
         title=updated_story["title"],
-        content=updated_story["content"],
+        description=updated_story["description"],
+        cover_image=updated_story.get("cover_image"),
         author_anonymous_name=updated_story["author_anonymous_name"],
-        images=[StoryImage(**img) for img in converted_images],
         tags=updated_story["tags"],
-        gender_category=updated_story.get("gender_category", GenderCategory.BIOLOGICAL_FEMALE),
+        mature_content=updated_story.get("mature_content", False),
         status=updated_story["status"],
+        chapter_count=chapter_count,
+        total_reads=updated_story.get("total_reads", 0),
         created_at=updated_story["created_at"],
         updated_at=updated_story["updated_at"],
         published_at=updated_story.get("published_at"),
         rejection_reason=updated_story.get("rejection_reason")
     )
-
-
-@router.post("/{story_id}/submit")
-async def submit_story(
-    story_id: str,
-    current_user: dict = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    """Submit a story for approval"""
-    await update_refresh_token_activity(current_user["username"], db)
-    
-    # Convert string ID to ObjectId
-    try:
-        story_object_id = ObjectId(story_id)
-    except:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid story ID format"
-        )
-    
-    story = await db.stories.find_one({"_id": story_object_id})
-    if not story:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Story not found"
-        )
-    
-    if story["author_id"] != str(current_user["_id"]):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to submit this story"
-        )
-    
-    if story["status"] != StoryStatus.DRAFT and story["status"] != StoryStatus.REJECTED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot submit story with status: {story['status']}"
-        )
-    
-    await db.stories.update_one(
-        {"_id": story_object_id},
-        {
-            "$set": {
-                "status": StoryStatus.PENDING,
-                "updated_at": datetime.utcnow(),
-                "rejection_reason": None
-            }
-        }
-    )
-    
-    return {"message": "Story submitted for approval"}
 
 
 @router.delete("/{story_id}")
@@ -326,11 +269,11 @@ async def delete_story(
     
     await db.stories.delete_one({"_id": story_object_id})
     
-    # Delete associated images
-    for image in story.get("images", []):
-        image_path = os.path.join(settings.upload_dir, image["url"].split('/')[-1])
-        if os.path.exists(image_path):
-            os.remove(image_path)
+    # Delete all chapters for this story
+    await db.chapters.delete_many({"story_id": story_id})
+    
+    # Delete all comments for this story
+    await db.comments.delete_many({"story_id": story_id})
     
     return {"message": "Story deleted successfully"}
 
@@ -340,23 +283,18 @@ async def get_feed(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
-    gender_category: Optional[GenderCategory] = GenderCategory.BIOLOGICAL_FEMALE,
     db=Depends(get_database)
 ):
-    """Get approved stories feed (public endpoint)"""
+    """Get stories feed (public endpoint)"""
     skip = (page - 1) * page_size
     
-    # Build query with search and gender filter
-    query = {"status": StoryStatus.APPROVED}
-    
-    # Add gender filter
-    if gender_category and gender_category != GenderCategory.ALL:
-        query["gender_category"] = gender_category
+    # Build query with search
+    query = {}
     
     if search:
         query["$or"] = [
             {"title": {"$regex": search, "$options": "i"}},
-            {"content": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}},
             {"tags": {"$regex": search, "$options": "i"}},
             {"author_anonymous_name": {"$regex": search, "$options": "i"}}
         ]
@@ -367,29 +305,29 @@ async def get_feed(
     
     total = await db.stories.count_documents(query)
     
-    story_responses = [
-        StoryResponse(
+    story_responses = []
+    for story in stories:
+        chapter_count = await db.chapters.count_documents({"story_id": str(story["_id"])})
+        story_responses.append(StoryResponse(
             id=str(story["_id"]),
             title=story["title"],
-            content=story["content"],
+            description=story.get("description", ""),
+            cover_image=story.get("cover_image"),
             author_anonymous_name=story["author_anonymous_name"],
-            author_id=story["author_id"],
-            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
+            author_id=story.get("author_id"),
             tags=story["tags"],
-            gender_category=story.get("gender_category", GenderCategory.BIOLOGICAL_FEMALE),
+            mature_content=story.get("mature_content", False),
             status=story["status"],
+            chapter_count=chapter_count,
+            total_reads=story.get("total_reads", 0),
             created_at=story["created_at"],
             updated_at=story["updated_at"],
             published_at=story.get("published_at")
-        )
-        for story in stories
-    ]
+        ))
     
     return StoryListResponse(
         stories=story_responses,
-        total=total,
-        page=page,
-        page_size=page_size
+        total=total
     )
 
 
@@ -403,36 +341,34 @@ async def get_author_stories(
     """Get all approved stories by a specific author (public endpoint)"""
     skip = (page - 1) * page_size
     
-    # Get approved stories by author
-    query = {"author_id": author_id, "status": StoryStatus.APPROVED}
     cursor = db.stories.find(query).sort("published_at", -1).skip(skip).limit(page_size)
     stories = await cursor.to_list(length=page_size)
     
     total = await db.stories.count_documents(query)
     
-    story_responses = [
-        StoryResponse(
+    story_responses = []
+    for story in stories:
+        chapter_count = await db.chapters.count_documents({"story_id": str(story["_id"])})
+        story_responses.append(StoryResponse(
             id=str(story["_id"]),
             title=story["title"],
-            content=story["content"],
+            description=story.get("description", ""),
+            cover_image=story.get("cover_image"),
             author_anonymous_name=story["author_anonymous_name"],
-            author_id=story["author_id"],
-            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
+            author_id=story.get("author_id"),
             tags=story["tags"],
-            gender_category=story.get("gender_category", GenderCategory.BIOLOGICAL_FEMALE),
+            mature_content=story.get("mature_content", False),
             status=story["status"],
+            chapter_count=chapter_count,
+            total_reads=story.get("total_reads", 0),
             created_at=story["created_at"],
             updated_at=story["updated_at"],
             published_at=story.get("published_at")
-        )
-        for story in stories
-    ]
+        ))
     
     return StoryListResponse(
         stories=story_responses,
-        total=total,
-        page=page,
-        page_size=page_size
+        total=total
     )
 
 
@@ -453,23 +389,25 @@ async def get_my_stories(
     
     total = await db.stories.count_documents({"author_id": str(current_user["_id"])})
     
-    story_responses = [
-        StoryResponse(
+    story_responses = []
+    for story in stories:
+        chapter_count = await db.chapters.count_documents({"story_id": str(story["_id"])})
+        story_responses.append(StoryResponse(
             id=str(story["_id"]),
             title=story["title"],
-            content=story["content"],
+            description=story.get("description", ""),
+            cover_image=story.get("cover_image"),
             author_anonymous_name=story["author_anonymous_name"],
-            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
             tags=story["tags"],
-            gender_category=story.get("gender_category", GenderCategory.BIOLOGICAL_FEMALE),
+            mature_content=story.get("mature_content", False),
             status=story["status"],
+            chapter_count=chapter_count,
+            total_reads=story.get("total_reads", 0),
             created_at=story["created_at"],
             updated_at=story["updated_at"],
             published_at=story.get("published_at"),
             rejection_reason=story.get("rejection_reason")
-        )
-        for story in stories
-    ]
+        ))
     
     return StoryListResponse(
         stories=story_responses,
@@ -477,107 +415,6 @@ async def get_my_stories(
         page=page,
         page_size=page_size
     )
-
-
-@router.get("/pending", response_model=StoryListResponse)
-async def get_pending_stories(
-    page: int = 1,
-    page_size: int = 10,
-    current_user: dict = Depends(get_current_admin_user),
-    db=Depends(get_database)
-):
-    """Get pending stories for admin approval"""
-    await update_refresh_token_activity(current_user["username"], db)
-    
-    skip = (page - 1) * page_size
-    
-    cursor = db.stories.find({"status": StoryStatus.PENDING}).sort("created_at", -1).skip(skip).limit(page_size)
-    stories = await cursor.to_list(length=page_size)
-    
-    total = await db.stories.count_documents({"status": StoryStatus.PENDING})
-    
-    story_responses = [
-        StoryResponse(
-            id=str(story["_id"]),
-            title=story["title"],
-            content=story["content"],
-            author_anonymous_name=story["author_anonymous_name"],
-            images=[StoryImage(**img) for img in convert_image_urls(story["images"])],
-            tags=story["tags"],
-            status=story["status"],
-            created_at=story["created_at"],
-            updated_at=story["updated_at"],
-            published_at=story.get("published_at")
-        )
-        for story in stories
-    ]
-    
-    return StoryListResponse(
-        stories=story_responses,
-        total=total,
-        page=page,
-        page_size=page_size
-    )
-
-
-@router.post("/{story_id}/approve")
-async def approve_story(
-    story_id: str,
-    approval: StoryApproval,
-    current_user: dict = Depends(get_current_admin_user),
-    db=Depends(get_database)
-):
-    """Approve or reject a story (Admin only)"""
-    await update_refresh_token_activity(current_user["username"], db)
-    
-    # Convert string ID to ObjectId
-    try:
-        story_object_id = ObjectId(story_id)
-    except:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid story ID format"
-        )
-    
-    story = await db.stories.find_one({"_id": story_object_id})
-    if not story:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Story not found"
-        )
-    
-    if story["status"] != StoryStatus.PENDING:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Story is not pending approval"
-        )
-    
-    if approval.approved:
-        update_data = {
-            "status": StoryStatus.APPROVED,
-            "published_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-            "rejection_reason": None
-        }
-        # Admin can set gender category during approval
-        if approval.gender_category:
-            update_data["gender_category"] = approval.gender_category
-        # Set default if not specified
-        elif "gender_category" not in story:
-            update_data["gender_category"] = GenderCategory.BIOLOGICAL_FEMALE
-    else:
-        update_data = {
-            "status": StoryStatus.REJECTED,
-            "updated_at": datetime.utcnow(),
-            "rejection_reason": approval.rejection_reason or "No reason provided"
-        }
-    
-    await db.stories.update_one(
-        {"_id": story_object_id},
-        {"$set": update_data}
-    )
-    
-    return {"message": "Story approved" if approval.approved else "Story rejected"}
 
 
 @router.get("/{story_id}", response_model=StoryResponse)
@@ -613,18 +450,21 @@ async def get_story(
                 detail="Not authorized to view this story"
             )
     
-    # Convert S3 keys to pre-signed URLs
-    converted_images = convert_image_urls(story["images"])
+    # Get chapter count
+    chapter_count = await db.chapters.count_documents({"story_id": story_id})
     
     return StoryResponse(
         id=str(story["_id"]),
         title=story["title"],
-        content=story["content"],
+        description=story.get("description", ""),
+        cover_image=story.get("cover_image"),
         author_anonymous_name=story["author_anonymous_name"],
-        author_id=story["author_id"],
-        images=[StoryImage(**img) for img in converted_images],
+        author_id=story.get("author_id"),
         tags=story["tags"],
+        mature_content=story.get("mature_content", False),
         status=story["status"],
+        chapter_count=chapter_count,
+        total_reads=story.get("total_reads", 0),
         created_at=story["created_at"],
         updated_at=story["updated_at"],
         published_at=story.get("published_at"),
