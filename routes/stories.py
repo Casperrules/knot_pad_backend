@@ -278,6 +278,60 @@ async def delete_story(
     return {"message": "Story deleted successfully"}
 
 
+@router.get("/", response_model=StoryListResponse)
+async def get_all_stories(
+    page: int = 1,
+    page_size: int = 10,
+    search: Optional[str] = None,
+    db=Depends(get_database)
+):
+    """Get all stories (public endpoint)"""
+    skip = (page - 1) * page_size
+    
+    # Build query with search
+    query = {}
+    
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}},
+            {"tags": {"$regex": search, "$options": "i"}},
+            {"author_anonymous_name": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Get all stories
+    cursor = db.stories.find(query).sort("published_at", -1).skip(skip).limit(page_size)
+    stories = await cursor.to_list(length=page_size)
+    
+    total = await db.stories.count_documents(query)
+    
+    story_responses = []
+    for story in stories:
+        chapter_count = await db.chapters.count_documents({"story_id": str(story["_id"])})
+        story_responses.append(StoryResponse(
+            id=str(story["_id"]),
+            title=story["title"],
+            description=story.get("description", ""),
+            cover_image=story.get("cover_image"),
+            author_anonymous_name=story["author_anonymous_name"],
+            author_id=story.get("author_id"),
+            tags=story["tags"],
+            mature_content=story.get("mature_content", False),
+            status=story["status"],
+            chapter_count=chapter_count,
+            total_reads=story.get("total_reads", 0),
+            created_at=story["created_at"],
+            updated_at=story["updated_at"],
+            published_at=story.get("published_at")
+        ))
+    
+    return StoryListResponse(
+        stories=story_responses,
+        total=total,
+        page_size=page_size
+    )
+
+
 @router.get("/feed", response_model=StoryListResponse)
 async def get_feed(
     page: int = 1,

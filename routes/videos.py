@@ -18,7 +18,7 @@ from models import (
     VideoApproval,
     StoryStatus,
 )
-from database import db
+from database import get_database
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/videos", tags=["videos"])
@@ -126,6 +126,7 @@ def video_helper(video: dict) -> dict:
 async def create_video(
     video_data: VideoCreate,
     current_user: User = Depends(get_current_user),
+    db = Depends(get_database),
 ):
     """Create a new video"""
     now = datetime.utcnow()
@@ -156,6 +157,7 @@ async def get_videos(
     page_size: int = 20,
     search: Optional[str] = None,
     current_user: Optional[User] = Depends(get_optional_user),
+    db = Depends(get_database),
 ):
     """Get videos feed"""
     skip = (page - 1) * page_size
@@ -179,7 +181,10 @@ async def get_videos(
 
 
 @router.get("/my-videos", response_model=VideoListResponse)
-async def get_my_videos(current_user: User = Depends(get_current_user)):
+async def get_my_videos(
+    current_user: User = Depends(get_current_user),
+    db = Depends(get_database),
+):
     """Get current user's videos"""
     videos = await db.videos.find({"author_id": current_user.id}).sort("created_at", -1).to_list(length=None)
     
@@ -193,6 +198,7 @@ async def get_my_videos(current_user: User = Depends(get_current_user)):
 async def get_video(
     video_id: str,
     current_user: Optional[User] = Depends(get_optional_user),
+    db = Depends(get_database),
 ):
     """Get a specific video by ID"""
     if not ObjectId.is_valid(video_id):
@@ -218,6 +224,7 @@ async def update_video(
     video_id: str,
     video_data: VideoUpdate,
     current_user: User = Depends(get_current_user),
+    db = Depends(get_database),
 ):
     """Update a video"""
     if not ObjectId.is_valid(video_id):
@@ -254,6 +261,7 @@ async def update_video(
 async def delete_video(
     video_id: str,
     current_user: User = Depends(get_current_user),
+    db = Depends(get_database),
 ):
     """Delete a video"""
     if not ObjectId.is_valid(video_id):
@@ -283,6 +291,7 @@ async def delete_video(
 async def toggle_like_video(
     video_id: str,
     current_user: User = Depends(get_current_user),
+    db = Depends(get_database),
 ):
     """Toggle like on a video"""
     if not ObjectId.is_valid(video_id):
@@ -325,6 +334,7 @@ async def toggle_like_video(
 async def check_if_liked(
     video_id: str,
     current_user: User = Depends(get_current_user),
+    db = Depends(get_database),
 ):
     """Check if current user has liked a video"""
     like = await db.video_likes.find_one({
