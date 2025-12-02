@@ -22,7 +22,7 @@ class S3Storage:
             self.s3_client = None
             self.bucket_name = None
     
-    def upload_file(self, file_content: bytes, filename: str, content_type: str) -> str:
+    def upload_file(self, file_content: bytes, filename: str, content_type: str, folder: str = "images") -> str:
         """
         Upload file to S3 bucket (private)
         Returns the S3 key (filename) for later retrieval
@@ -33,7 +33,7 @@ class S3Storage:
         try:
             # Generate unique filename
             file_extension = filename.rsplit('.', 1)[1].lower() if '.' in filename else 'jpg'
-            unique_filename = f"images/{uuid.uuid4()}.{file_extension}"
+            unique_filename = f"{folder}/{uuid.uuid4()}.{file_extension}"
             
             # Upload to S3 (private - no ACL)
             self.s3_client.put_object(
