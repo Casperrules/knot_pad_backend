@@ -6,7 +6,7 @@ from models import (
     StoryCreate, StoryUpdate, StoryResponse, StoryListResponse, 
     StoryStatus, StoryApproval, StoryImage, UserRole
 )
-from auth import get_current_user, get_current_admin_user, update_refresh_token_activity
+from auth import get_current_user, get_current_admin_user, update_refresh_token_activity, get_optional_user
 from database import get_database
 from config import get_settings
 from s3_storage import s3_storage
@@ -133,10 +133,10 @@ async def create_story(
         "mature_content": story.mature_content,
         "author_id": str(current_user["_id"]),
         "author_anonymous_name": current_user["anonymous_name"],
-        "status": StoryStatus.DRAFT,
+        "status": StoryStatus.APPROVED,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow(),
-        "published_at": None,
+        "published_at": datetime.utcnow(),
         "rejection_reason": None
     }
     
@@ -474,11 +474,12 @@ async def get_my_stories(
 @router.get("/{story_id}", response_model=StoryResponse)
 async def get_story(
     story_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: Optional[dict] = Depends(get_optional_user),
     db=Depends(get_database)
 ):
     """Get a single story by ID"""
-    await update_refresh_token_activity(current_user["username"], db)
+    if current_user:
+        await update_refresh_token_activity(current_user["username"], db)
     
     # Convert string ID to ObjectId
     try:
@@ -498,7 +499,7 @@ async def get_story(
     
     # Only approved stories are visible to all, others only to author and admin
     if story["status"] != StoryStatus.APPROVED:
-        if story["author_id"] != str(current_user["_id"]) and current_user["role"] != UserRole.ADMIN:
+        if not current_user or (story["author_id"] != str(current_user["_id"]) and current_user["role"] != UserRole.ADMIN):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to view this story"
