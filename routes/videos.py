@@ -156,13 +156,14 @@ async def get_videos(
     page: int = 1,
     page_size: int = 20,
     search: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_optional_user),
+    current_user: Optional[dict] = Depends(get_optional_user),
     db = Depends(get_database),
 ):
     """Get videos feed"""
     skip = (page - 1) * page_size
     
-    query = {}
+    # Base query - only show approved videos for public feed
+    query = {"status": StoryStatus.APPROVED}
     
     if search:
         query["$or"] = [
