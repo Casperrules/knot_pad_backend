@@ -86,7 +86,7 @@ async def calculate_user_points(user_id: str, db) -> PointsBreakdown:
 
 async def update_user_points(user_id: str, db) -> int:
     """Recalculate and update user's total points"""
-    breakdown = await calculate_user_points(user_id, db) db)
+    breakdown = await calculate_user_points(user_id, db)
     await db.users.update_one(
         {"_id": ObjectId(user_id)},
         {"$set": {"points": breakdown.total_points}}
