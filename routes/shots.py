@@ -115,7 +115,7 @@ async def create_shot(
             "caption": shot.caption,
             "tags": shot.tags or [],
             "mature_content": shot.mature_content or False,
-            "author_id": current_user["id"],
+            "author_id": str(current_user["_id"]),
             "author_anonymous_name": current_user["anonymous_name"],
             "likes": 0,
             "status": StoryStatus.PENDING.value,
@@ -158,7 +158,7 @@ async def get_shots(
         # Get user's liked shots if authenticated
         user_liked_shots = []
         if current_user:
-            user_likes = await db.user_liked_posts.find_one({"user_id": current_user["id"]})
+            user_likes = await db.user_liked_posts.find_one({"user_id": str(current_user["_id"])})
             user_liked_shots = user_likes.get("liked_shots", []) if user_likes else []
         
         # Format response
@@ -199,7 +199,7 @@ async def get_my_shots(
     """Get current user's shots"""
     try:
         shots_cursor = db.shots.find(
-            {"author_id": current_user["id"]}
+            {"author_id": str(current_user["_id"])}
         ).sort("created_at", -1).skip(skip).limit(limit)
         shots = await shots_cursor.to_list(length=limit)
         
@@ -220,7 +220,7 @@ async def get_my_shots(
                 shot["mature_content"] = False
             formatted_shots.append(ShotResponse(**shot))
         
-        total = await db.shots.count_documents({"author_id": current_user["id"]})
+        total = await db.shots.count_documents({"author_id": str(current_user["_id"])})
         
         return ShotListResponse(shots=formatted_shots, total=total)
     except Exception as e:
@@ -251,7 +251,7 @@ async def get_shot(
         # Check if user liked this shot
         shot["is_liked"] = False
         if current_user:
-            user_likes = await db.user_liked_posts.find_one({"user_id": current_user["id"]})
+            user_likes = await db.user_liked_posts.find_one({"user_id": str(current_user["_id"])})
             if user_likes:
                 shot["is_liked"] = shot_id in user_likes.get("liked_shots", [])
         
@@ -291,7 +291,7 @@ async def update_shot(
             raise HTTPException(status_code=404, detail="Shot not found")
         
         # Check ownership
-        if existing_shot["author_id"] != current_user["id"]:
+        if existing_shot["author_id"] != str(current_user["_id"]):
             raise HTTPException(status_code=403, detail="Not authorized to update this shot")
         
         # Update fields
@@ -344,12 +344,12 @@ async def delete_shot(
         
         # Check ownership or admin
         is_admin = current_user.get("role") == "admin"
-        if existing_shot["author_id"] != current_user["id"] and not is_admin:
+        if existing_shot["author_id"] != str(current_user["_id"]) and not is_admin:
             raise HTTPException(status_code=403, detail="Not authorized to delete this shot")
         
         await db.shots.delete_one({"_id": ObjectId(shot_id)})
         
-        logger.info(f"Shot {shot_id} deleted by user {current_user['id']}")
+        logger.info(f"Shot {shot_id} deleted by user {str(current_user['_id'])}")
         return None
     except HTTPException:
         raise
@@ -374,11 +374,11 @@ async def like_shot(
             raise HTTPException(status_code=404, detail="Shot not found")
         
         # Get or create user likes document
-        user_likes = await db.user_liked_posts.find_one({"user_id": current_user["id"]})
+        user_likes = await db.user_liked_posts.find_one({"user_id": str(current_user["_id"])})
         
         if not user_likes:
             user_likes = {
-                "user_id": current_user["id"],
+                "user_id": str(current_user["_id"]),
                 "liked_stories": [],
                 "liked_videos": [],
                 "liked_comments": [],
@@ -392,7 +392,7 @@ async def like_shot(
         if shot_id in liked_shots:
             # Unlike
             await db.user_liked_posts.update_one(
-                {"user_id": current_user["id"]},
+                {"user_id": str(current_user["_id"])},
                 {
                     "$pull": {"liked_shots": shot_id},
                     "$set": {"updated_at": datetime.utcnow()}
@@ -406,7 +406,7 @@ async def like_shot(
         else:
             # Like
             await db.user_liked_posts.update_one(
-                {"user_id": current_user["id"]},
+                {"user_id": str(current_user["_id"])},
                 {
                     "$addToSet": {"liked_shots": shot_id},
                     "$set": {"updated_at": datetime.utcnow()}
