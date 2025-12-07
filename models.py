@@ -402,5 +402,46 @@ class UserLikedPosts(BaseModel):
     liked_stories: List[str] = []  # Story IDs
     liked_videos: List[str] = []  # Video IDs
     liked_comments: List[str] = []  # Comment IDs
+    liked_shots: List[str] = []  # Shot IDs
     updated_at: datetime
+
+
+# Shot (Image Post) Models
+class ShotCreate(BaseModel):
+    image_url: str
+    caption: str
+    tags: Optional[List[str]] = []
+    mature_content: Optional[bool] = False
+
+
+class ShotUpdate(BaseModel):
+    caption: Optional[str] = None
+    tags: Optional[List[str]] = None
+    mature_content: Optional[bool] = None
+
+
+class ShotResponse(BaseModel):
+    id: str
+    image_url: str
+    caption: str
+    tags: List[str]
+    mature_content: bool
+    author_anonymous_name: str
+    author_id: Optional[str] = None
+    likes: int = 0
+    is_liked: bool = False
+    status: StoryStatus  # draft, pending, approved, rejected
+    created_at: datetime
+    updated_at: datetime
+    rejection_reason: Optional[str] = None
+
+
+class ShotListResponse(BaseModel):
+    shots: List[ShotResponse]
+    total: int
+
+
+class ShotApproval(BaseModel):
+    approved: bool
+    rejection_reason: Optional[str] = None
 

@@ -6,7 +6,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from database import connect_to_mongo, close_mongo_connection
-from routes import auth, stories, comments, chapters, videos, monitoring, users
+from routes import auth, stories, comments, chapters, videos, monitoring, users, shots
 from config import get_settings
 import os
 import logging
@@ -63,6 +63,7 @@ app.include_router(chapters.router)
 app.include_router(videos.router)
 app.include_router(monitoring.router)
 app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(shots.router, prefix="/api/shots", tags=["shots"])
 
 # Startup and shutdown events
 @app.on_event("startup")
