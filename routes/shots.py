@@ -168,13 +168,24 @@ async def get_shots(
             shot["is_liked"] = str(shot["_id"]) in user_liked_shots
             # Convert S3 URLs to presigned URLs
             shot["image_url"] = convert_s3_url(shot.get("image_url", ""))
+            # Ensure all required fields have defaults
+            if "status" not in shot:
+                shot["status"] = "pending"
+            if "likes" not in shot:
+                shot["likes"] = 0
+            if "tags" not in shot:
+                shot["tags"] = []
+            if "mature_content" not in shot:
+                shot["mature_content"] = False
             formatted_shots.append(ShotResponse(**shot))
         
         total = await db.shots.count_documents(query)
         
         return ShotListResponse(shots=formatted_shots, total=total)
     except Exception as e:
+        import traceback
         logger.error(f"Error fetching shots: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error fetching shots: {str(e)}")
 
 
@@ -198,6 +209,15 @@ async def get_my_shots(
             shot["is_liked"] = False  # Own shots
             # Convert S3 URLs to presigned URLs
             shot["image_url"] = convert_s3_url(shot.get("image_url", ""))
+            # Ensure all required fields have defaults
+            if "status" not in shot:
+                shot["status"] = "pending"
+            if "likes" not in shot:
+                shot["likes"] = 0
+            if "tags" not in shot:
+                shot["tags"] = []
+            if "mature_content" not in shot:
+                shot["mature_content"] = False
             formatted_shots.append(ShotResponse(**shot))
         
         total = await db.shots.count_documents({"author_id": current_user["id"]})
@@ -234,6 +254,16 @@ async def get_shot(
             user_likes = await db.user_liked_posts.find_one({"user_id": current_user["id"]})
             if user_likes:
                 shot["is_liked"] = shot_id in user_likes.get("liked_shots", [])
+        
+        # Ensure all required fields have defaults
+        if "status" not in shot:
+            shot["status"] = "pending"
+        if "likes" not in shot:
+            shot["likes"] = 0
+        if "tags" not in shot:
+            shot["tags"] = []
+        if "mature_content" not in shot:
+            shot["mature_content"] = False
         
         return ShotResponse(**shot)
     except HTTPException:
