@@ -9,7 +9,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from auth import get_current_user, get_optional_user
-from database import db
+from database import get_database
 from models import (
     UserStats,
     PointsBreakdown,
@@ -30,7 +30,7 @@ def generate_referral_code(length: int = 8) -> str:
     return ''.join(secrets.choice(characters) for _ in range(length))
 
 
-async def calculate_user_points(user_id: str) -> PointsBreakdown:
+async def calculate_user_points(user_id: str, db) -> PointsBreakdown:
     """Calculate user's points from all sources"""
     user = await db.users.find_one({"_id": ObjectId(user_id)})
     if not user:
@@ -84,9 +84,9 @@ async def calculate_user_points(user_id: str) -> PointsBreakdown:
     )
 
 
-async def update_user_points(user_id: str) -> int:
+async def update_user_points(user_id: str, db) -> int:
     """Recalculate and update user's total points"""
-    breakdown = await calculate_user_points(user_id)
+    breakdown = await calculate_user_points(user_id, db) db)
     await db.users.update_one(
         {"_id": ObjectId(user_id)},
         {"$set": {"points": breakdown.total_points}}
@@ -95,7 +95,7 @@ async def update_user_points(user_id: str) -> int:
 
 
 @router.get("/me/stats", response_model=UserStats)
-async def get_my_stats(current_user: dict = Depends(get_current_user)):
+async def get_my_stats(current_user: dict = Depends(get_current_user), db=Depends(get_database)):
     """Get current user's stats including points, referrals, and content counts"""
     user_id = current_user["_id"]
     
@@ -105,7 +105,7 @@ async def get_my_stats(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="User not found")
     
     # Update points before returning
-    await update_user_points(user_id)
+    await update_user_points(user_id, db)
     user = await db.users.find_one({"_id": ObjectId(user_id)})
     
     # Count stories
@@ -156,16 +156,17 @@ async def get_my_stats(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/me/points", response_model=PointsBreakdown)
-async def get_my_points_breakdown(current_user: dict = Depends(get_current_user)):
+async def get_my_points_breakdown(current_user: dict = Depends(get_current_user), db=Depends(get_database)):
     """Get detailed breakdown of how user earned their points"""
     user_id = current_user["_id"]
-    return await calculate_user_points(user_id)
+    return await calculate_user_points(user_id, db)
 
 
 @router.get("/me/referral", response_model=ReferralInfo)
 async def get_my_referral_info(
     request: Request,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_database)
 ):
     """Get user's referral code and link"""
     user_id = current_user["_id"]
@@ -198,7 +199,8 @@ async def get_my_referral_info(
 @router.get("/leaderboard")
 async def get_leaderboard(
     limit: int = 50,
-    current_user: dict = Depends(get_optional_user)
+    current_user: dict = Depends(get_optional_user),
+    db=Depends(get_database)
 ):
     """Get top users by points"""
     users = await db.users.find(
@@ -222,7 +224,7 @@ async def get_leaderboard(
 
 
 @router.get("/me/liked-posts", response_model=UserLikedPosts)
-async def get_my_liked_posts(current_user: dict = Depends(get_current_user)):
+async def get_my_liked_posts(current_user: dict = Depends(get_current_user), db=Depends(get_database)):
     """Get all posts the user has liked (for AI recommendations)"""
     user_id = current_user["_id"]
     
@@ -259,7 +261,8 @@ async def get_my_liked_posts(current_user: dict = Depends(get_current_user)):
 @router.get("/{user_id}/stats", response_model=UserStats)
 async def get_user_stats(
     user_id: str,
-    current_user: dict = Depends(get_optional_user)
+    current_user: dict = Depends(get_optional_user),
+    db=Depends(get_database)
 ):
     """Get public stats for any user"""
     try:
@@ -271,7 +274,7 @@ async def get_user_stats(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Update points
-    await update_user_points(user_id)
+    await update_user_points(user_id, db)
     user = await db.users.find_one({"_id": ObjectId(user_id)})
     
     # Count stories
