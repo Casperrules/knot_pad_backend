@@ -171,7 +171,9 @@ async def get_shots(
             shot["id"] = str(shot["_id"])
             shot["is_liked"] = str(shot["_id"]) in user_liked_shots
             # Convert S3 URLs to presigned URLs
-            shot["image_url"] = convert_s3_url(shot.get("image_url", ""))
+            original_url = shot.get("image_url", "")
+            shot["image_url"] = convert_s3_url(original_url)
+            logger.debug(f"Shot {shot['id']}: Original URL: {original_url[:50]}..., Converted URL: {shot['image_url'][:50] if shot['image_url'] else 'EMPTY'}...")
             # Ensure all required fields have defaults
             if "status" not in shot:
                 shot["status"] = "pending"
