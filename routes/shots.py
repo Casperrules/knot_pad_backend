@@ -1,14 +1,108 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Request
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
+import uuid
+import os
 
 from models import ShotCreate, ShotUpdate, ShotResponse, ShotListResponse, ShotApproval, StoryStatus
 from auth import get_current_user, get_current_admin_user
 from database import get_database
 from logger_config import logger
+from config import get_settings
+from s3_storage import s3_storage
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
+settings = get_settings()
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
+
+
+def allowed_image_file(filename: str) -> bool:
+    """Check if file extension is allowed for images"""
+    if '.' not in filename:
+        return False
+    ext = filename.rsplit('.', 1)[1].lower()
+    return ext in settings.allowed_extensions.split(',')
+
+
+def convert_s3_url(image_url: str) -> str:
+    """
+    Convert S3 key (s3://key) to pre-signed URL
+    Local URLs remain unchanged
+    """
+    if not settings.use_s3 or not image_url:
+        return image_url
+    
+    # If URL starts with s3://, generate pre-signed URL
+    if image_url.startswith('s3://'):
+        s3_key = image_url.replace('s3://', '')
+        try:
+            return s3_storage.get_presigned_url(s3_key, expiration=86400)  # 24 hours
+        except Exception as e:
+            logger.error(f"Failed to generate pre-signed URL: {e}")
+            return ''  # Fallback to empty string
+    
+    return image_url
+
+
+@router.post("/upload-image", response_model=dict)
+@limiter.limit("20/hour")
+async def upload_shot_image(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Upload an image file for a shot to S3 or local storage"""
+    if not allowed_image_file(file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type not allowed. Allowed types: {settings.allowed_extensions}"
+        )
+    
+    # Check file size
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    
+    if file_size > settings.max_file_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size / 1024 / 1024}MB"
+        )
+    
+    # Read file content
+    file_content = await file.read()
+    
+    # Upload based on configuration
+    if settings.use_s3:
+        try:
+            # Upload to S3 (returns S3 key, not URL)
+            s3_key = s3_storage.upload_file(
+                file_content=file_content,
+                filename=file.filename,
+                content_type=file.content_type or "image/jpeg",
+                folder="shots"
+            )
+            # Store S3 key, not URL (for security)
+            return {"url": f"s3://{s3_key}"}
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload to S3: {str(e)}"
+            )
+    else:
+        # Local storage (development)
+        file_extension = file.filename.rsplit('.', 1)[1].lower()
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        file_path = os.path.join(settings.upload_dir, unique_filename)
+        
+        # Save file locally
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+        
+        return {"url": f"/uploads/{unique_filename}"}
 
 
 @router.post("/", response_model=ShotResponse, status_code=status.HTTP_201_CREATED)
@@ -36,6 +130,8 @@ async def create_shot(
         shot_dict["id"] = str(result.inserted_id)
         shot_dict["_id"] = str(result.inserted_id)
         shot_dict["is_liked"] = False
+        # Convert S3 URLs to presigned URLs for response
+        shot_dict["image_url"] = convert_s3_url(shot_dict.get("image_url", ""))
         
         logger.info(f"Shot created by user {current_user['id']}")
         return ShotResponse(**shot_dict)
@@ -73,6 +169,8 @@ async def get_shots(
         for shot in shots:
             shot["id"] = str(shot["_id"])
             shot["is_liked"] = str(shot["_id"]) in user_liked_shots
+            # Convert S3 URLs to presigned URLs
+            shot["image_url"] = convert_s3_url(shot.get("image_url", ""))
             formatted_shots.append(ShotResponse(**shot))
         
         total = await db.shots.count_documents(query)
@@ -101,6 +199,8 @@ async def get_my_shots(
         for shot in shots:
             shot["id"] = str(shot["_id"])
             shot["is_liked"] = False  # Own shots
+            # Convert S3 URLs to presigned URLs
+            shot["image_url"] = convert_s3_url(shot.get("image_url", ""))
             formatted_shots.append(ShotResponse(**shot))
         
         total = await db.shots.count_documents({"author_id": current_user["id"]})
@@ -127,6 +227,9 @@ async def get_shot(
             raise HTTPException(status_code=404, detail="Shot not found")
         
         shot["id"] = str(shot["_id"])
+        
+        # Convert S3 URLs to presigned URLs
+        shot["image_url"] = convert_s3_url(shot.get("image_url", ""))
         
         # Check if user liked this shot
         shot["is_liked"] = False
@@ -184,6 +287,8 @@ async def update_shot(
         updated_shot = await db.shots.find_one({"_id": ObjectId(shot_id)})
         updated_shot["id"] = str(updated_shot["_id"])
         updated_shot["is_liked"] = False
+        # Convert S3 URLs to presigned URLs
+        updated_shot["image_url"] = convert_s3_url(updated_shot.get("image_url", ""))
         
         logger.info(f"Shot {shot_id} updated by user {current_user['id']}")
         return ShotResponse(**updated_shot)
@@ -359,6 +464,8 @@ async def approve_or_reject_shot(
         updated_shot = await db.shots.find_one({"_id": ObjectId(shot_id)})
         updated_shot["id"] = str(updated_shot["_id"])
         updated_shot["is_liked"] = False
+        # Convert S3 URLs to presigned URLs
+        updated_shot["image_url"] = convert_s3_url(updated_shot.get("image_url", ""))
         
         logger.info(f"Shot {shot_id} {'approved' if approval.approved else 'rejected'} by admin {current_user['id']}")
         return ShotResponse(**updated_shot)
@@ -387,6 +494,8 @@ async def get_pending_shots(
         for shot in shots:
             shot["id"] = str(shot["_id"])
             shot["is_liked"] = False
+            # Convert S3 URLs to presigned URLs
+            shot["image_url"] = convert_s3_url(shot.get("image_url", ""))
             formatted_shots.append(ShotResponse(**shot))
         
         total = await db.shots.count_documents({"status": StoryStatus.PENDING.value})
