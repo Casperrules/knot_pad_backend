@@ -8,10 +8,11 @@ import os
 from models import ShotCreate, ShotUpdate, ShotResponse, ShotListResponse, ShotApproval, StoryStatus
 from auth import get_current_user, get_current_admin_user
 from database import get_database
-from logger_config import logger
+import logging
 from config import get_settings
 from s3_storage import s3_storage
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter()
 
