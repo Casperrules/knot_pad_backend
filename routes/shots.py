@@ -130,7 +130,7 @@ async def create_shot(
         # Convert S3 URLs to presigned URLs for response
         shot_dict["image_url"] = convert_s3_url(shot_dict.get("image_url", ""))
         
-        logger.info(f"Shot created by user {current_user['id']}")
+        logger.info(f"Shot created by user {str(current_user['_id'])}")
         return ShotResponse(**shot_dict)
     except Exception as e:
         logger.error(f"Error creating shot: {str(e)}")
@@ -317,7 +317,7 @@ async def update_shot(
         # Convert S3 URLs to presigned URLs
         updated_shot["image_url"] = convert_s3_url(updated_shot.get("image_url", ""))
         
-        logger.info(f"Shot {shot_id} updated by user {current_user['id']}")
+        logger.info(f"Shot {shot_id} updated by user {str(current_user['_id'])}")
         return ShotResponse(**updated_shot)
     except HTTPException:
         raise
@@ -494,7 +494,7 @@ async def approve_or_reject_shot(
         # Convert S3 URLs to presigned URLs
         updated_shot["image_url"] = convert_s3_url(updated_shot.get("image_url", ""))
         
-        logger.info(f"Shot {shot_id} {'approved' if approval.approved else 'rejected'} by admin {current_user['id']}")
+        logger.info(f"Shot {shot_id} {'approved' if approval.approved else 'rejected'} by admin {str(current_user['_id'])}")
         return ShotResponse(**updated_shot)
     except HTTPException:
         raise
