@@ -97,7 +97,7 @@ async def update_user_points(user_id: str, db) -> int:
 @router.get("/me/stats", response_model=UserStats)
 async def get_my_stats(current_user: dict = Depends(get_current_user), db=Depends(get_database)):
     """Get current user's stats including points, referrals, and content counts"""
-    user_id = current_user["_id"]
+    user_id = str(current_user["_id"])  # Convert ObjectId to string
     
     # Get user data
     user = await db.users.find_one({"_id": ObjectId(user_id)})
