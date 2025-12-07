@@ -11,12 +11,9 @@ from database import get_database
 from logger_config import logger
 from config import get_settings
 from s3_storage import s3_storage
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 settings = get_settings()
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 
 def allowed_image_file(filename: str) -> bool:
@@ -48,7 +45,6 @@ def convert_s3_url(image_url: str) -> str:
 
 
 @router.post("/upload-image", response_model=dict)
-@limiter.limit("20/hour")
 async def upload_shot_image(
     request: Request,
     file: UploadFile = File(...),
