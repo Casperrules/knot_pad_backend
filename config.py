@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = "admin123"
     
+    # Frontend URL for referral links
+    frontend_url: str = "http://localhost:3000"
+    
     # File Upload
     upload_dir: str = "uploads"
     max_file_size: int = 5242880  # 5MB

@@ -183,9 +183,10 @@ async def get_my_referral_info(
             {"$set": {"referral_code": referral_code}}
         )
     
-    # Generate referral link
-    base_url = str(request.base_url).rstrip("/")
-    referral_link = f"{base_url}/register?ref={referral_code}"
+    # Use frontend URL for referral link
+    from config import get_settings
+    settings = get_settings()
+    referral_link = f"{settings.frontend_url}/register?ref={referral_code}"
     
     return ReferralInfo(
         referral_code=referral_code,
