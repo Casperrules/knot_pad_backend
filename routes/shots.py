@@ -130,7 +130,7 @@ async def create_shot(
         # Convert S3 URLs to presigned URLs for response
         shot_dict["image_url"] = convert_s3_url(shot_dict.get("image_url", ""))
         
-        logger.info(f"Shot created by user {str(current_user['_id'])}")
+        logger.info(f"Shot created successfully - ID: {shot_dict['id']}, Status: {shot_dict['status']}, Image URL: {shot_dict.get('image_url', '')[:50]}...")
         return ShotResponse(**shot_dict)
     except Exception as e:
         logger.error(f"Error creating shot: {str(e)}")
@@ -151,9 +151,13 @@ async def get_shots(
         if status_filter:
             query["status"] = status_filter
         
+        logger.info(f"Fetching shots with query: {query}, skip: {skip}, limit: {limit}")
+        
         # Get shots
         shots_cursor = db.shots.find(query).sort("created_at", -1).skip(skip).limit(limit)
         shots = await shots_cursor.to_list(length=limit)
+        
+        logger.info(f"Found {len(shots)} shots")
         
         # Get user's liked shots if authenticated
         user_liked_shots = []
