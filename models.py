@@ -429,6 +429,7 @@ class ShotResponse(BaseModel):
     author_anonymous_name: str
     author_id: Optional[str] = None
     likes: int = 0
+    views: int = 0
     is_liked: bool = False
     status: StoryStatus  # draft, pending, approved, rejected
     created_at: datetime

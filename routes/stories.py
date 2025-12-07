@@ -606,6 +606,14 @@ async def get_story(
                 detail="Not authorized to view this story"
             )
     
+    # Increment view count (for all users, logged in or not)
+    await db.stories.update_one(
+        {"_id": story_object_id},
+        {"$inc": {"total_reads": 1}}
+    )
+    # Update the story dict to reflect the new view count
+    story["total_reads"] = story.get("total_reads", 0) + 1
+    
     # Get chapter count
     chapter_count = await db.chapters.count_documents({"story_id": story_id})
     

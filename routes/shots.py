@@ -118,6 +118,7 @@ async def create_shot(
             "author_id": str(current_user["_id"]),
             "author_anonymous_name": current_user["anonymous_name"],
             "likes": 0,
+            "views": 0,
             "status": StoryStatus.APPROVED.value,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
@@ -179,6 +180,8 @@ async def get_shots(
                 shot["status"] = "pending"
             if "likes" not in shot:
                 shot["likes"] = 0
+            if "views" not in shot:
+                shot["views"] = 0
             if "tags" not in shot:
                 shot["tags"] = []
             if "mature_content" not in shot:
@@ -220,6 +223,8 @@ async def get_my_shots(
                 shot["status"] = "pending"
             if "likes" not in shot:
                 shot["likes"] = 0
+            if "views" not in shot:
+                shot["views"] = 0
             if "tags" not in shot:
                 shot["tags"] = []
             if "mature_content" not in shot:
@@ -249,6 +254,14 @@ async def get_shot(
         if not shot:
             raise HTTPException(status_code=404, detail="Shot not found")
         
+        # Increment view count
+        await db.shots.update_one(
+            {"_id": ObjectId(shot_id)},
+            {"$inc": {"views": 1}}
+        )
+        # Update the shot dict to reflect the new view count
+        shot["views"] = shot.get("views", 0) + 1
+        
         shot["id"] = str(shot["_id"])
         
         # Convert S3 URLs to presigned URLs
@@ -266,6 +279,8 @@ async def get_shot(
             shot["status"] = "pending"
         if "likes" not in shot:
             shot["likes"] = 0
+        if "views" not in shot:
+            shot["views"] = 0
         if "tags" not in shot:
             shot["tags"] = []
         if "mature_content" not in shot:
