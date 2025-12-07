@@ -6,7 +6,7 @@ import uuid
 import os
 
 from models import ShotCreate, ShotUpdate, ShotResponse, ShotListResponse, ShotApproval, StoryStatus
-from auth import get_current_user, get_current_admin_user
+from auth import get_current_user, get_optional_user, get_current_admin_user
 from database import get_database
 import logging
 from config import get_settings
@@ -142,7 +142,7 @@ async def get_shots(
     skip: int = 0,
     limit: int = 20,
     status_filter: Optional[str] = "approved",
-    current_user: Optional[dict] = Depends(get_current_user),
+    current_user: Optional[dict] = Depends(get_optional_user),
     db = Depends(get_database)
 ):
     """Get all shots with pagination"""
@@ -211,7 +211,7 @@ async def get_my_shots(
 @router.get("/{shot_id}", response_model=ShotResponse)
 async def get_shot(
     shot_id: str,
-    current_user: Optional[dict] = Depends(get_current_user),
+    current_user: Optional[dict] = Depends(get_optional_user),
     db = Depends(get_database)
 ):
     """Get a specific shot by ID"""
