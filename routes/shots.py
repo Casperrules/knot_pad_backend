@@ -118,7 +118,7 @@ async def create_shot(
             "author_id": str(current_user["_id"]),
             "author_anonymous_name": current_user["anonymous_name"],
             "likes": 0,
-            "status": StoryStatus.PENDING.value,
+            "status": StoryStatus.APPROVED.value,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
