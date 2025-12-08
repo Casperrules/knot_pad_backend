@@ -7,6 +7,7 @@ from datetime import datetime
 from bson import ObjectId
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+import logging
 
 from auth import get_current_user, get_optional_user
 from database import get_database
@@ -18,6 +19,8 @@ from models import (
     UserLikedPosts,
 )
 import secrets
+
+logger = logging.getLogger(__name__)
 import string
 
 router = APIRouter()
