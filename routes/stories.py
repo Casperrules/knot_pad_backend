@@ -296,6 +296,7 @@ async def get_all_stories(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
+    current_user: Optional[dict] = Depends(get_optional_user),
     db=Depends(get_database)
 ):
     """Get all stories (public endpoint)"""
@@ -318,6 +319,12 @@ async def get_all_stories(
     
     total = await db.stories.count_documents(query)
     
+    # Get user's liked stories if authenticated
+    user_liked_stories = []
+    if current_user:
+        user_likes = await db.user_liked_posts.find_one({"user_id": str(current_user["_id"])})
+        user_liked_stories = user_likes.get("liked_stories", []) if user_likes else []
+    
     story_responses = []
     for story in stories:
         chapter_count = await db.chapters.count_documents({"story_id": str(story["_id"])})
@@ -333,6 +340,8 @@ async def get_all_stories(
             status=story["status"],
             chapter_count=chapter_count,
             total_reads=story.get("total_reads", 0),
+            likes=story.get("likes", 0),
+            is_liked=str(story["_id"]) in user_liked_stories,
             created_at=story["created_at"],
             updated_at=story["updated_at"],
             published_at=story.get("published_at")
@@ -350,6 +359,7 @@ async def get_feed(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
+    current_user: Optional[dict] = Depends(get_optional_user),
     db=Depends(get_database)
 ):
     """Get stories feed (public endpoint)"""
@@ -372,6 +382,12 @@ async def get_feed(
     
     total = await db.stories.count_documents(query)
     
+    # Get user's liked stories if authenticated
+    user_liked_stories = []
+    if current_user:
+        user_likes = await db.user_liked_posts.find_one({"user_id": str(current_user["_id"])})
+        user_liked_stories = user_likes.get("liked_stories", []) if user_likes else []
+    
     story_responses = []
     for story in stories:
         chapter_count = await db.chapters.count_documents({"story_id": str(story["_id"])})
@@ -387,6 +403,8 @@ async def get_feed(
             status=story["status"],
             chapter_count=chapter_count,
             total_reads=story.get("total_reads", 0),
+            likes=story.get("likes", 0),
+            is_liked=str(story["_id"]) in user_liked_stories,
             created_at=story["created_at"],
             updated_at=story["updated_at"],
             published_at=story.get("published_at")
@@ -403,15 +421,23 @@ async def get_author_stories(
     author_id: str,
     page: int = 1,
     page_size: int = 10,
+    current_user: Optional[dict] = Depends(get_optional_user),
     db=Depends(get_database)
 ):
     """Get all approved stories by a specific author (public endpoint)"""
     skip = (page - 1) * page_size
     
+    query = {"author_id": author_id, "status": "approved"}
     cursor = db.stories.find(query).sort("published_at", -1).skip(skip).limit(page_size)
     stories = await cursor.to_list(length=page_size)
     
     total = await db.stories.count_documents(query)
+    
+    # Get user's liked stories if authenticated
+    user_liked_stories = []
+    if current_user:
+        user_likes = await db.user_liked_posts.find_one({"user_id": str(current_user["_id"])})
+        user_liked_stories = user_likes.get("liked_stories", []) if user_likes else []
     
     story_responses = []
     for story in stories:
@@ -428,6 +454,8 @@ async def get_author_stories(
             status=story["status"],
             chapter_count=chapter_count,
             total_reads=story.get("total_reads", 0),
+            likes=story.get("likes", 0),
+            is_liked=str(story["_id"]) in user_liked_stories,
             created_at=story["created_at"],
             updated_at=story["updated_at"],
             published_at=story.get("published_at")
@@ -470,6 +498,8 @@ async def get_my_stories(
             status=story["status"],
             chapter_count=chapter_count,
             total_reads=story.get("total_reads", 0),
+            likes=story.get("likes", 0),
+            is_liked=False,  # Own stories
             created_at=story["created_at"],
             updated_at=story["updated_at"],
             published_at=story.get("published_at"),
