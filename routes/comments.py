@@ -19,6 +19,7 @@ def build_comment_tree(comments: List[dict], parent_id: str = None) -> List[Comm
                 content=comment["content"],
                 story_id=comment.get("story_id"),
                 video_id=comment.get("video_id"),
+                shot_id=comment.get("shot_id"),
                 chapter_id=comment.get("chapter_id"),
                 selected_text=comment.get("selected_text"),
                 text_position=comment.get("text_position"),
@@ -476,3 +477,87 @@ async def toggle_comment_like(
     }
 
 
+
+@router.post("/shot/{shot_id}", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
+async def create_shot_comment(
+    shot_id: str,
+    comment: CommentCreate,
+    current_user: dict = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    """Create a new comment on a shot"""
+    # Verify shot exists
+    shot = await db.shots.find_one({"_id": ObjectId(shot_id)})
+    if not shot:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shot not found"
+        )
+    
+    # If parent_comment_id provided, verify it exists
+    if comment.parent_comment_id:
+        parent = await db.comments.find_one({"_id": ObjectId(comment.parent_comment_id)})
+        if not parent:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Parent comment not found"
+            )
+    
+    # Create comment document
+    comment_doc = {
+        "content": comment.content,
+        "shot_id": shot_id,
+        "parent_comment_id": comment.parent_comment_id,
+        "user_id": current_user["_id"],
+        "anonymous_name": current_user["anonymous_name"],
+        "upvotes": 0,
+        "downvotes": 0,
+        "likes": 0,
+        "liked_by": [],
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    result = await db.comments.insert_one(comment_doc)
+    comment_doc["_id"] = result.inserted_id
+    
+    return CommentResponse(
+        id=str(result.inserted_id),
+        content=comment_doc["content"],
+        shot_id=comment_doc["shot_id"],
+        story_id=None,
+        video_id=None,
+        chapter_id=None,
+        selected_text=None,
+        text_position=None,
+        parent_comment_id=comment_doc.get("parent_comment_id"),
+        user_id=str(comment_doc["user_id"]),
+        anonymous_name=comment_doc["anonymous_name"],
+        upvotes=comment_doc["upvotes"],
+        downvotes=comment_doc["downvotes"],
+        created_at=comment_doc["created_at"],
+        updated_at=comment_doc["updated_at"],
+        replies=[]
+    )
+
+
+@router.get("/shot/{shot_id}", response_model=List[CommentResponse])
+async def get_shot_comments(
+    shot_id: str,
+    db = Depends(get_database)
+):
+    """Get all comments for a shot with nested replies"""
+    # Verify shot exists
+    shot = await db.shots.find_one({"_id": ObjectId(shot_id)})
+    if not shot:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shot not found"
+        )
+    
+    # Get all comments for this shot
+    cursor = db.comments.find({"shot_id": shot_id}).sort("created_at", 1)
+    comments = await cursor.to_list(length=None)
+    
+    # Build nested tree (only return top-level comments)
+    return build_comment_tree(comments, parent_id=None)

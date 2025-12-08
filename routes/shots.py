@@ -45,6 +45,16 @@ def convert_s3_url(image_url: str) -> str:
     return image_url
 
 
+async def get_shot_comments_count(db, shot_id: str) -> int:
+    """Get comment count for a shot"""
+    try:
+        count = await db.comments.count_documents({"shot_id": shot_id})
+        return count
+    except Exception as e:
+        logger.error(f"Error getting comments count for shot {shot_id}: {str(e)}")
+        return 0
+
+
 @router.post("/upload-image", response_model=dict)
 async def upload_shot_image(
     request: Request,
@@ -128,6 +138,7 @@ async def create_shot(
         shot_dict["id"] = str(result.inserted_id)
         shot_dict["_id"] = str(result.inserted_id)
         shot_dict["is_liked"] = False
+        shot_dict["comments_count"] = 0
         # Convert S3 URLs to presigned URLs for response
         shot_dict["image_url"] = convert_s3_url(shot_dict.get("image_url", ""))
         
@@ -171,6 +182,8 @@ async def get_shots(
         for shot in shots:
             shot["id"] = str(shot["_id"])
             shot["is_liked"] = str(shot["_id"]) in user_liked_shots
+            # Get comments count
+            shot["comments_count"] = await get_shot_comments_count(db, str(shot["_id"]))
             # Convert S3 URLs to presigned URLs
             original_url = shot.get("image_url", "")
             shot["image_url"] = convert_s3_url(original_url)
@@ -216,6 +229,8 @@ async def get_my_shots(
         for shot in shots:
             shot["id"] = str(shot["_id"])
             shot["is_liked"] = False  # Own shots
+            # Get comments count
+            shot["comments_count"] = await get_shot_comments_count(db, str(shot["_id"]))
             # Convert S3 URLs to presigned URLs
             shot["image_url"] = convert_s3_url(shot.get("image_url", ""))
             # Ensure all required fields have defaults
@@ -263,6 +278,9 @@ async def get_shot(
         shot["views"] = shot.get("views", 0) + 1
         
         shot["id"] = str(shot["_id"])
+        
+        # Get comments count
+        shot["comments_count"] = await get_shot_comments_count(db, str(shot["_id"]))
         
         # Convert S3 URLs to presigned URLs
         shot["image_url"] = convert_s3_url(shot.get("image_url", ""))

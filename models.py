@@ -219,6 +219,7 @@ class CommentBase(BaseModel):
     content: str
     story_id: Optional[str] = None
     video_id: Optional[str] = None  # Comment on video
+    shot_id: Optional[str] = None  # Comment on shot
     chapter_id: Optional[str] = None  # Comment on specific chapter
     selected_text: Optional[str] = None  # Text user highlighted
     text_position: Optional[int] = None  # Character position in chapter
@@ -251,6 +252,7 @@ class CommentResponse(BaseModel):
     content: str
     story_id: Optional[str] = None
     video_id: Optional[str] = None
+    shot_id: Optional[str] = None
     chapter_id: Optional[str] = None
     selected_text: Optional[str] = None
     text_position: Optional[int] = None
@@ -430,6 +432,7 @@ class ShotResponse(BaseModel):
     author_id: Optional[str] = None
     likes: int = 0
     views: int = 0
+    comments_count: int = 0
     is_liked: bool = False
     status: StoryStatus  # draft, pending, approved, rejected
     created_at: datetime

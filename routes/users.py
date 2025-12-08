@@ -44,13 +44,13 @@ async def calculate_user_points(user_id: str, db) -> PointsBreakdown:
         "author_id": user_id,
         "status": "approved"
     })
-    story_points = stories_count
+    story_points = stories_count * 1  # Make it explicit: 1 point per story
     
     # Like points: 1 point per 1000 likes across all content
     # Get total likes from stories
     story_pipeline = [
         {"$match": {"author_id": user_id}},
-        {"$group": {"_id": None, "total_likes": {"$sum": "$likes"}}}
+        {"$group": {"_id": None, "total_likes": {"$sum": {"$ifNull": ["$likes", 0]}}}}
     ]
     story_likes_result = await db.stories.aggregate(story_pipeline).to_list(1)
     story_likes = story_likes_result[0]["total_likes"] if story_likes_result else 0
@@ -58,7 +58,7 @@ async def calculate_user_points(user_id: str, db) -> PointsBreakdown:
     # Get total likes from videos
     video_pipeline = [
         {"$match": {"author_id": user_id}},
-        {"$group": {"_id": None, "total_likes": {"$sum": "$likes"}}}
+        {"$group": {"_id": None, "total_likes": {"$sum": {"$ifNull": ["$likes", 0]}}}}
     ]
     video_likes_result = await db.videos.aggregate(video_pipeline).to_list(1)
     video_likes = video_likes_result[0]["total_likes"] if video_likes_result else 0
@@ -66,15 +66,25 @@ async def calculate_user_points(user_id: str, db) -> PointsBreakdown:
     # Get total likes from comments
     comment_pipeline = [
         {"$match": {"user_id": user_id}},
-        {"$group": {"_id": None, "total_likes": {"$sum": "$likes"}}}
+        {"$group": {"_id": None, "total_likes": {"$sum": {"$ifNull": ["$likes", 0]}}}}
     ]
     comment_likes_result = await db.comments.aggregate(comment_pipeline).to_list(1)
     comment_likes = comment_likes_result[0]["total_likes"] if comment_likes_result else 0
     
-    total_likes = story_likes + video_likes + comment_likes
+    # Get total likes from shots
+    shot_pipeline = [
+        {"$match": {"author_id": user_id}},
+        {"$group": {"_id": None, "total_likes": {"$sum": {"$ifNull": ["$likes", 0]}}}}
+    ]
+    shot_likes_result = await db.shots.aggregate(shot_pipeline).to_list(1)
+    shot_likes = shot_likes_result[0]["total_likes"] if shot_likes_result else 0
+    
+    total_likes = story_likes + video_likes + comment_likes + shot_likes
     like_points = total_likes // 1000
     
     total_points = referral_points + story_points + like_points
+    
+    logger.info(f"Points calculation for user {user_id}: stories={stories_count}, story_points={story_points}, story_likes={story_likes}, video_likes={video_likes}, comment_likes={comment_likes}, shot_likes={shot_likes}, total_points={total_points}")
     
     return PointsBreakdown(
         referral_points=referral_points,
@@ -123,21 +133,27 @@ async def get_my_stats(current_user: dict = Depends(get_current_user), db=Depend
     # Get total likes from all content
     story_likes = await db.stories.aggregate([
         {"$match": {"author_id": user_id}},
-        {"$group": {"_id": None, "total": {"$sum": "$likes"}}}
+        {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$likes", 0]}}}}
     ]).to_list(1)
     total_story_likes = story_likes[0]["total"] if story_likes else 0
     
     video_likes = await db.videos.aggregate([
         {"$match": {"author_id": user_id}},
-        {"$group": {"_id": None, "total": {"$sum": "$likes"}}}
+        {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$likes", 0]}}}}
     ]).to_list(1)
     total_video_likes = video_likes[0]["total"] if video_likes else 0
     
     comment_likes = await db.comments.aggregate([
-        {"$match": {"user_id": user_id}},
-        {"$group": {"_id": None, "total": {"$sum": "$likes"}}}
+        {"$match": {"author_id": user_id}},
+        {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$likes", 0]}}}}
     ]).to_list(1)
     total_comment_likes = comment_likes[0]["total"] if comment_likes else 0
+    
+    shot_likes = await db.shots.aggregate([
+        {"$match": {"author_id": user_id}},
+        {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$likes", 0]}}}}
+    ]).to_list(1)
+    total_shot_likes = shot_likes[0]["total"] if shot_likes else 0
     
     return UserStats(
         user_id=user_id,
@@ -148,7 +164,7 @@ async def get_my_stats(current_user: dict = Depends(get_current_user), db=Depend
         referral_count=user.get("referral_count", 0),
         stories_count=stories_count,
         videos_count=videos_count,
-        total_likes_received=total_story_likes + total_video_likes + total_comment_likes,
+        total_likes_received=total_story_likes + total_video_likes + total_comment_likes + total_shot_likes,
         total_story_likes=total_story_likes,
         total_video_likes=total_video_likes,
         total_comment_likes=total_comment_likes
