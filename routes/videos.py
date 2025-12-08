@@ -96,7 +96,7 @@ async def upload_video_file(
         return {"url": f"/uploads/videos/{unique_filename}"}
 
 
-def video_helper(video: dict) -> dict:
+def video_helper(video: dict, user_liked_videos: list = []) -> dict:
     """Convert MongoDB video document to response format"""
     video_url = video["video_url"]
     
@@ -119,6 +119,7 @@ def video_helper(video: dict) -> dict:
         "author_anonymous_name": video["author_anonymous_name"],
         "likes": video.get("likes", 0),
         "views": video.get("views", 0),
+        "is_liked": str(video["_id"]) in user_liked_videos,
         "status": video.get("status", "draft"),
         "created_at": video["created_at"],
         "updated_at": video["updated_at"],
@@ -188,7 +189,13 @@ async def get_videos(
     
     total = await db.videos.count_documents(query)
     
-    video_responses = [VideoResponse(**video_helper(video)) for video in videos]
+    # Get user's liked videos if authenticated
+    user_liked_videos = []
+    if current_user:
+        user_likes = await db.user_liked_posts.find_one({"user_id": str(current_user["_id"])})
+        user_liked_videos = user_likes.get("liked_videos", []) if user_likes else []
+    
+    video_responses = [VideoResponse(**video_helper(video, user_liked_videos)) for video in videos]
     
     return VideoListResponse(videos=video_responses, total=total)
 
@@ -202,7 +209,8 @@ async def get_my_videos(
     videos = await db.videos.find({"author_id": str(current_user["_id"])}).sort("created_at", -1).to_list(length=None)
     
     total = len(videos)
-    video_responses = [VideoResponse(**video_helper(video)) for video in videos]
+    # User's own videos - no need to check liked status
+    video_responses = [VideoResponse(**video_helper(video, [])) for video in videos]
     
     return VideoListResponse(videos=video_responses, total=total)
 
@@ -229,7 +237,13 @@ async def get_video(
     )
     video["views"] = video.get("views", 0) + 1
     
-    return VideoResponse(**video_helper(video))
+    # Get user's liked videos if authenticated
+    user_liked_videos = []
+    if current_user:
+        user_likes = await db.user_liked_posts.find_one({"user_id": str(current_user["_id"])})
+        user_liked_videos = user_likes.get("liked_videos", []) if user_likes else []
+    
+    return VideoResponse(**video_helper(video, user_liked_videos))
 
 
 @router.put("/{video_id}", response_model=VideoResponse)
@@ -300,16 +314,6 @@ async def delete_video(
     return {"message": "Video deleted successfully"}
 
 
-@router.post("/{video_id}/like")
-async def toggle_like_video(
-    video_id: str,
-    current_user: dict = Depends(get_current_user),
-    db = Depends(get_database),
-):
-    """Toggle like on a video"""
-    if not ObjectId.is_valid(video_id):
-        raise HTTPException(status_code=400, detail="Invalid video ID")
-    
 @router.post("/{video_id}/like")
 async def toggle_video_like(
     video_id: str,
